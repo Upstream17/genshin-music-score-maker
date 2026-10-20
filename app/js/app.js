@@ -1,0 +1,1625 @@
+/* ==========================================================================
+   风物之诗琴 · 曲谱工坊  —  主程序
+   --------------------------------------------------------------------------
+   classic script（非 ES module），零依赖，file:// 双击直开。
+   依赖（按顺序，先于本文件加载）：
+     js/bettergi-parse.js  ->  window.BGIParse     曲谱解析（三种 type）
+     js/audio-engine.js    ->  window.BGIAudio     Web Audio 音源
+     js/samples.js         ->  window.BGI_SAMPLES  可选：21 音真实采样（base64）
+
+   三个核心承诺：
+     · 时间轴以 AudioContext.currentTime 为唯一时钟（setTimeout 只做提前调度）
+     · 变速改的是「乐谱时间→音频时间」的换算，不改 playbackRate，所以不变调
+     · 停止后不残留高亮（第一个音常在 t=0 起始，容易被误判为「按住」）
+   ========================================================================== */
+(function () {
+  'use strict';
+
+  /* ═══════════════════ 常量 ═══════════════════ */
+
+  var NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  var SOLFEGE = { 0: 'do', 2: 're', 4: 'mi', 5: 'fa', 7: 'sol', 9: 'la', 11: 'si' };
+
+  /* 原神风物之诗琴 21 键（上→下 三排），与 BetterGI StandardMappings 一致 */
+  var ROWS = [
+    { tag: '高', range: 'C5–B5', keys: ['Q', 'W', 'E', 'R', 'T', 'Y', 'U'] },
+    { tag: '中', range: 'C4–B4', keys: ['A', 'S', 'D', 'F', 'G', 'H', 'J'] },
+    { tag: '低', range: 'C3–B3', keys: ['Z', 'X', 'C', 'V', 'B', 'N', 'M'] }
+  ];
+  /* 低→高的音高顺序（卷帘纵轴） */
+  var LABELS = 'ZXCVBNMASDFGHJQWERTYU';
+
+  var FALLBACK_KEY_TO_PITCH = {
+    Z: 48, X: 50, C: 52, V: 53, B: 55, N: 57, M: 59,
+    A: 60, S: 62, D: 64, F: 65, G: 67, H: 69, J: 71,
+    Q: 72, W: 74, E: 76, R: 77, T: 79, Y: 81, U: 83
+  };
+
+  var LOOKAHEAD_SEC = 0.30;
+  var SCHED_INTERVAL_MS = 25;
+  var MAX_IMPORT = 6000;
+  var MIN_NOTE_MS = 30;
+  var DEFAULT_DUR = 320;      /* 编辑模式下新加音符的默认时值 */
+  var END_PAD_MS = 900;       /* 曲尾判定留白 */
+
+  /* ═══════════════════ DOM ═══════════════════ */
+
+  var el = {};
+  function cacheDom() {
+    [
+      'btnPickFiles', 'btnPickDir', 'dropzone', 'fileInput', 'dirInput',
+      'importProgress', 'importBar', 'importText',
+      'search', 'listCount', 'btnClearList', 'scoreList',
+      'npTitle', 'npSub', 'npNoteName', 'npNoteSol',
+      'btnPlay', 'btnPlayLabel', 'btnStop', 'btnPrev', 'btnNext', 'trackIndex',
+      'speed', 'speedVal', 'loop', 'autoplay',
+      'tNow', 'tTotal', 'seek', 'seekWrap', 'seekFill', 'seekThumb',
+      'keyboard', 'playKeys', 'playHint',
+      'modePlay', 'modeEdit',
+      'editBar', 'editInfo', 'btnPitchDown', 'btnPitchUp', 'btnDurDown', 'btnDurUp',
+      'btnDel', 'btnEditUndo', 'btnEditReset', 'btnEditExport',
+      'roll', 'rollHint', 'zoom', 'zoomVal', 'btnFitAll',
+      'instrument', 'volume', 'btnLoadSamples', 'sampleInput', 'sampleStat',
+      'diag', 'liveText', 'toast'
+    ].forEach(function (id) { el[id] = document.getElementById(id); });
+  }
+
+  /* ═══════════════════ 状态 ═══════════════════ */
+
+  var state = {
+    entries: [],
+    filter: '',
+    selectedId: null,
+    current: null,          /* 当前 Score（含可编辑的 notes 副本） */
+    currentEntry: null,
+    sourceJson: null,       /* 原始解析出来的 JSON 对象（导出 / 还原用） */
+    maxNoteMs: 1,
+
+    engine: null,
+    instrumentKey: '',      /* 'real:<id>' 真实采样 | 'synth:<id>' 合成 */
+    customFiles: null,      /* 用户自己加载的采样（本会话有效） */
+    volume: 0.8,
+    samplesReady: false,
+
+    playing: false,
+    posMs: 0,
+    speed: 1,
+    loop: false,
+    autoplay: true,
+
+    viewSec: 8,
+    baseCtxTime: 0,
+    baseScoreMs: 0,
+    cursor: 0,
+    seeking: false,
+    nextId: 1,
+    schedTimer: null,
+    rollCtx: null,
+    fatal: false,
+
+    keysDown: null,
+    heldKeys: {},           /* PC 键盘按住中的键（只影响视觉） */
+    audition: {},
+    playKeys: true,
+
+    edit: {
+      on: false,
+      selNote: null,
+      undo: [],
+      dirty: false
+    }
+  };
+
+  /* ═══════════════════ 小工具 ═══════════════════ */
+
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+
+  function pitchName(m) {
+    if (window.BGIParse && typeof window.BGIParse.pitchName === 'function') {
+      try { return window.BGIParse.pitchName(m); } catch (_) { /* fall through */ }
+    }
+    return NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+  }
+  function solfege(m) { return SOLFEGE[((m % 12) + 12) % 12] || ''; }
+
+  function keyToPitch(k) {
+    if (window.BGIParse && window.BGIParse.KEY_TO_PITCH && window.BGIParse.KEY_TO_PITCH[k] != null) {
+      return window.BGIParse.KEY_TO_PITCH[k];
+    }
+    return FALLBACK_KEY_TO_PITCH[k];
+  }
+  function pitchToKey(p) {
+    if (window.BGIParse && window.BGIParse.PITCH_TO_KEY && window.BGIParse.PITCH_TO_KEY[p]) {
+      return window.BGIParse.PITCH_TO_KEY[p];
+    }
+    for (var k in FALLBACK_KEY_TO_PITCH) if (FALLBACK_KEY_TO_PITCH[k] === p) return k;
+    return null;
+  }
+  /** 音级上下移动（只落在 21 键上，所以按白键音阶走） */
+  function stepPitch(pitch, dir) {
+    var i = LABELS.indexOf(pitchToKey(pitch));
+    if (i < 0) return pitch;
+    var j = clamp(i + dir, 0, 20);
+    return keyToPitch(LABELS[j]);
+  }
+
+  function fmtTime(ms) {
+    if (!isFinite(ms) || ms < 0) ms = 0;
+    var t = ms / 1000, m = Math.floor(t / 60), s = t - m * 60;
+    return m + ':' + (s < 10 ? '0' : '') + s.toFixed(1);
+  }
+  function fmtDur(ms) {
+    var t = Math.round((ms || 0) / 1000);
+    return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+  }
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  var toastTimer = null;
+  function toast(msg, kind, ms) {
+    if (!el.toast) { console.warn(msg); return; }
+    el.toast.textContent = msg;
+    el.toast.className = 'toast' + (kind ? ' ' + kind : '');
+    el.toast.hidden = false;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.toast.hidden = true; }, ms || 3600);
+  }
+
+  function readText(file) {
+    return new Promise(function (resolve, reject) {
+      if (typeof file.text === 'function') { file.text().then(resolve, reject); return; }
+      var fr = new FileReader();
+      fr.onload = function () { resolve(String(fr.result)); };
+      fr.onerror = function () { reject(fr.error || new Error('读取失败')); };
+      fr.readAsText(file, 'utf-8');
+    });
+  }
+
+  function upperBoundStart(notes, t) {
+    var lo = 0, hi = notes.length;
+    while (lo < hi) { var mid = (lo + hi) >> 1; if (notes[mid].start > t) hi = mid; else lo = mid + 1; }
+    return lo;
+  }
+  function lowerBoundEnd(notes, t) {
+    var lo = 0, hi = notes.length;
+    while (lo < hi) { var mid = (lo + hi) >> 1; if (notes[mid].end > t) hi = mid; else lo = mid + 1; }
+    return lo;
+  }
+
+  /* ═══════════════════ 音频引擎 ═══════════════════ */
+
+  function engNow() {
+    var e = state.engine;
+    if (!e) return 0;
+    try {
+      var t = (typeof e.currentTime === 'function') ? e.currentTime() : e.currentTime;
+      if (typeof t === 'number' && isFinite(t)) return t;
+    } catch (_) { }
+    try { if (e.ctx && typeof e.ctx.currentTime === 'number') return e.ctx.currentTime; } catch (_) { }
+    return 0;
+  }
+
+  function ensureEngine() {
+    if (state.engine) return true;
+    if (!window.BGIAudio || typeof window.BGIAudio.createEngine !== 'function') {
+      toast('音频引擎未加载：js/audio-engine.js 缺失', 'err');
+      return false;
+    }
+    try { state.engine = window.BGIAudio.createEngine(); }
+    catch (e) { toast('音频引擎初始化失败：' + ((e && e.message) || e), 'err'); return false; }
+    try { state.engine.setMasterVolume(state.volume); } catch (_) { }
+    /* 先给合成音色兜底；真实采样由 applyInstrument() 随后覆盖 */
+    try { state.engine.setInstrument('windsong'); } catch (_) { }
+    return true;
+  }
+
+  function safeResume() {
+    return Promise.resolve()
+      .then(function () { if (state.engine && typeof state.engine.resume === 'function') return state.engine.resume(); })
+      .catch(function () { toast('浏览器阻止了音频启动 —— 请再点一次「播放」', 'err'); });
+  }
+
+  function noteOn(pitch, whenSec, durSec, vel) {
+    if (!state.engine) return;
+    try { state.engine.noteOn(pitch, whenSec, durSec, vel == null ? 0.9 : vel); } catch (_) { }
+  }
+
+  /* ═══════════════════ 音色：真实采样（多套） + 合成兜底 ═══════════════════
+     真实采样按「每套一个 js」组织：samples.js 里是**清单 + 默认音色**，
+     其余 samples-<id>.js 在切换时用 <script> 动态加载（file:// 下同样可用）。
+     engine 的采样是**按 midi 合并写入**的，所以换套之前必须 clearSamples()，
+     否则上一套的音色会残留在没被新套覆盖的音高上。 */
+
+  var SYNTH_PREFIX = 'synth:';
+  var setLoading = {};         /* id -> Promise（避免重复注入 script） */
+  var applyToken = 0;          /* 防止快速连切时旧结果覆盖新选择 */
+
+  function sampleManifest() {
+    return (window.BGI_SAMPLE_MANIFEST && window.BGI_SAMPLE_MANIFEST.length)
+      ? window.BGI_SAMPLE_MANIFEST : null;
+  }
+
+  function setSampleStat(text, kind) {
+    if (!el.sampleStat) return;
+    el.sampleStat.textContent = text;
+    el.sampleStat.className = 'sample-stat' + (kind ? ' ' + kind : '');
+  }
+
+  /** 下拉框数据：真实音色在前，合成压到最后并明确标「备用」 */
+  function instrumentOptions() {
+    var out = [];
+    var mf = sampleManifest();
+    if (mf) {
+      mf.forEach(function (m) {
+        out.push({ key: 'real:' + m.id, label: m.name, id: m.id });
+      });
+    }
+    if (state.customFiles) {
+      out.push({ key: 'real:custom', label: '自定义采样（本次）', id: 'custom' });
+    }
+    var synths = [];
+    try {
+      synths = (window.BGIAudio.listInstruments() || []).filter(function (x) { return x.kind === 'synth'; });
+    } catch (_) { }
+    synths.forEach(function (s) {
+      out.push({
+        key: SYNTH_PREFIX + s.id,
+        label: '合成（备用）· ' + s.name.replace(/[（(].*?[)）]/g, ''),
+        id: s.id
+      });
+    });
+    return out;
+  }
+
+  /** 按需注入某套音色的数据文件 */
+  function ensureSetScript(id) {
+    if (window.BGI_SAMPLE_SETS && window.BGI_SAMPLE_SETS[id]) return Promise.resolve();
+    if (setLoading[id]) return setLoading[id];
+    var mf = (sampleManifest() || []).filter(function (m) { return m.id === id; })[0];
+    if (!mf || !mf.file) return Promise.reject(new Error('没有该音色的数据文件'));
+    setLoading[id] = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = mf.file;
+      s.onload = function () { resolve(); };
+      s.onerror = function () { delete setLoading[id]; reject(new Error('无法加载 ' + mf.file)); };
+      document.body.appendChild(s);
+    });
+    return setLoading[id];
+  }
+
+  /** base64 → File[]（文件名用科学音高，引擎按文件名识别音高） */
+  function filesFromBank(notes) {
+    var out = [];
+    Object.keys(notes).forEach(function (note) {
+      var b64 = String(notes[note]).split(',')[1] || '';
+      var bin = atob(b64), len = bin.length, arr = new Uint8Array(len);
+      for (var i = 0; i < len; i++) arr[i] = bin.charCodeAt(i);
+      out.push(new File([arr], note + '.mp3', { type: 'audio/mpeg' }));
+    });
+    return out;
+  }
+
+  async function applyInstrument(key) {
+    key = key || state.instrumentKey;
+    if (!key) return;
+    state.instrumentKey = key;
+    if (!ensureEngine()) return;
+    var token = ++applyToken;
+
+    /* 合成音色 */
+    if (key.indexOf(SYNTH_PREFIX) === 0) {
+      try { state.engine.setInstrument(key.slice(SYNTH_PREFIX.length)); } catch (_) { }
+      setSampleStat('合成音色（备用）· 没有真实采样时的兜底', '');
+      return;
+    }
+
+    /* 真实采样 */
+    var id = key.slice(5);
+    var info = id === 'custom'
+      ? { name: '自定义采样' }
+      : ((sampleManifest() || []).filter(function (m) { return m.id === id; })[0] || { name: id });
+
+    setSampleStat('正在加载「' + info.name + '」…', '');
+    try {
+      var files;
+      if (id === 'custom') {
+        if (!state.customFiles) throw new Error('请重新选择采样文件夹');
+        files = state.customFiles;
+      } else {
+        await ensureSetScript(id);
+        var bank = window.BGI_SAMPLE_SETS && window.BGI_SAMPLE_SETS[id];
+        if (!bank || !bank.notes) throw new Error('音色数据缺失');
+        files = filesFromBank(bank.notes);
+      }
+      if (token !== applyToken) return;
+
+      if (typeof state.engine.clearSamples === 'function') state.engine.clearSamples();
+      var res = await state.engine.loadSampleFiles(files);
+      if (token !== applyToken) return;
+
+      state.engine.setInstrument('sample');
+      state.samplesReady = true;
+      var miss = 21 - res.loaded;
+      setSampleStat(info.name + ' · 真实采样 ' + res.loaded + '/21 音' +
+        (miss > 0 ? '（缺 ' + miss + ' 音，用邻近采样变调）' : ' ✓'), 'ok');
+    } catch (e) {
+      if (token !== applyToken) return;
+      setSampleStat('「' + info.name + '」加载失败：' + ((e && e.message) || e) + ' · 已回退合成音色', 'err');
+      try { state.engine.setInstrument('windsong'); } catch (_) { }
+    }
+  }
+
+  /* ═══════════════════ 导入 ═══════════════════ */
+
+  function pickJson(files) {
+    var json = [], other = 0;
+    for (var i = 0; i < files.length; i++) {
+      if (/\.json$/i.test(files[i].name)) json.push(files[i]); else other++;
+    }
+    return { json: json, other: other };
+  }
+
+  function walkEntry(entry, out) {
+    return new Promise(function (resolve) {
+      if (!entry) { resolve(); return; }
+      if (entry.isFile) {
+        entry.file(function (f) { out.push(f); resolve(); }, function () { resolve(); });
+      } else if (entry.isDirectory) {
+        var reader = entry.createReader(), all = [];
+        (function readBatch() {
+          reader.readEntries(function (batch) {
+            if (!batch || !batch.length) {
+              Promise.all(all.map(function (e) { return walkEntry(e, out); })).then(function () { resolve(); });
+              return;
+            }
+            all = all.concat(batch);
+            readBatch();
+          }, function () { resolve(); });
+        })();
+      } else { resolve(); }
+    });
+  }
+
+  function collectFromDataTransfer(dt) {
+    return new Promise(function (resolve) {
+      var out = [], items = dt.items;
+      if (!items || !items.length) { resolve(Array.prototype.slice.call(dt.files || [])); return; }
+      var entries = [], direct = [];
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (it.kind !== 'file') continue;
+        var en = it.webkitGetAsEntry ? it.webkitGetAsEntry() : null;
+        if (en) entries.push(en);
+        else { var f = it.getAsFile(); if (f) direct.push(f); }
+      }
+      out = out.concat(direct);
+      Promise.all(entries.map(function (e) { return walkEntry(e, out); }))
+        .then(function () { resolve(out); });
+    });
+  }
+
+  async function importFiles(fileList) {
+    var files = Array.prototype.slice.call(fileList || []);
+    if (!files.length) return;
+    if (files.length > MAX_IMPORT) {
+      toast('一次拖入 ' + files.length + ' 个文件，超过上限 ' + MAX_IMPORT, 'err');
+      return;
+    }
+    var picked = pickJson(files);
+    if (!picked.json.length) {
+      toast('没有找到 .json 曲谱文件' + (picked.other ? '（忽略了 ' + picked.other + ' 个非 json）' : ''), 'err');
+      return;
+    }
+
+    el.importProgress.hidden = false;
+    el.importBar.style.width = '0%';
+
+    var seen = {};
+    state.entries.forEach(function (e) { seen[e.path] = true; });
+
+    var added = 0, dup = 0, failed = 0, errors = [];
+
+    for (var i = 0; i < picked.json.length; i++) {
+      var f = picked.json[i];
+      var path = f.webkitRelativePath || f.name;
+      el.importBar.style.width = Math.round(((i + 1) / picked.json.length) * 100) + '%';
+      el.importText.textContent = (i + 1) + ' / ' + picked.json.length + ' · ' + f.name;
+
+      if (seen[path]) { dup++; continue; }
+      try {
+        var text = await readText(f);
+        var obj = JSON.parse(text);
+        var sc = window.BGIParse.parseScore(obj, { filename: f.name });
+        state.entries.push({
+          id: state.nextId++,
+          path: path,
+          fileName: f.name,
+          name: sc.ok ? (sc.name || f.name.replace(/\.json$/i, '')) : f.name.replace(/\.json$/i, ''),
+          author: sc.author || '',
+          type: sc.type || 'unknown',
+          ok: !!sc.ok,
+          error: sc.error || '',
+          noteCount: sc.stats ? sc.stats.noteCount : 0,
+          durationMs: sc.stats ? sc.stats.durationMs : 0,
+          instrument: sc.instrument || '',
+          text: text
+        });
+        seen[path] = true;
+        added++;
+      } catch (e) {
+        failed++;
+        if (errors.length < 6) errors.push(f.name + '：' + ((e && e.message) || e));
+      }
+      if (i % 20 === 0) await new Promise(function (r) { setTimeout(r, 0); });
+    }
+
+    el.importProgress.hidden = true;
+    sortEntries();
+    renderList();
+
+    var msg = '导入 ' + added + ' 首';
+    if (dup) msg += ' · 重复 ' + dup;
+    if (failed) msg += ' · 失败 ' + failed;
+    if (picked.other) msg += ' · 忽略 ' + picked.other;
+    toast(msg, failed ? 'err' : 'ok', 4200);
+
+    if (errors.length) console.warn('导入失败样例：', errors);
+    if (state.entries.length && !state.selectedId) {
+      var firstOk = state.entries.filter(function (e) { return e.ok; })[0];
+      if (firstOk) selectEntry(firstOk.id);
+    }
+    updateTrackNav();
+  }
+
+  function sortEntries() {
+    state.entries.sort(function (a, b) {
+      if (a.ok !== b.ok) return a.ok ? -1 : 1;
+      return a.name.localeCompare(b.name, 'zh-Hans-CN');
+    });
+  }
+
+  /* ═══════════════════ 歌单 ═══════════════════ */
+
+  function visibleEntries() {
+    var q = state.filter.trim().toLowerCase();
+    if (!q) return state.entries;
+    return state.entries.filter(function (e) {
+      return (e.name + ' ' + e.author + ' ' + e.type + ' ' + e.path).toLowerCase().indexOf(q) >= 0;
+    });
+  }
+  function playableEntries() {
+    return state.entries.filter(function (e) { return e.ok; });
+  }
+  function playlistPos() {
+    var list = playableEntries();
+    for (var i = 0; i < list.length; i++) if (list[i].id === state.selectedId) return { i: i, n: list.length };
+    return { i: -1, n: list.length };
+  }
+
+  function updateTrackNav() {
+    var p = playlistPos();
+    if (el.trackIndex) {
+      el.trackIndex.textContent = p.n ? ((p.i < 0 ? '—' : (p.i + 1)) + ' / ' + p.n) : '—';
+    }
+    var has = p.n > 1;
+    if (el.btnPrev) el.btnPrev.disabled = !has;
+    if (el.btnNext) el.btnNext.disabled = !has;
+  }
+
+  /** 切到歌单里的相对位置（保持播放状态） */
+  function jumpTrack(delta, startPlaying) {
+    var list = playableEntries();
+    if (!list.length) return;
+    var cur = playlistPos().i;
+    var next = cur < 0 ? 0 : cur + delta;
+    if (next < 0) next = list.length - 1;
+    if (next >= list.length) next = 0;
+    var wasPlaying = state.playing || startPlaying;
+    selectEntry(list[next].id);
+    scrollListTo(list[next].id);
+    if (wasPlaying) playCurrent();
+  }
+
+  function scrollListTo(id) {
+    var li = el.scoreList && el.scoreList.querySelector('li[data-id="' + id + '"]');
+    if (li && li.scrollIntoView) li.scrollIntoView({ block: 'nearest' });
+  }
+
+  /* ═══════════════════ 列表 ═══════════════════ */
+
+  function renderList() {
+    var list = visibleEntries();
+    el.listCount.textContent = list.length + ' / ' + state.entries.length + ' 首';
+
+    var html = [];
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      var cls = 'li' + (e.id === state.selectedId ? ' sel' : '') + (e.ok ? '' : ' bad');
+      var badge = e.ok
+        ? '<span class="badge">' + esc(e.type) + '</span>'
+        : '<span class="badge err">!</span>';
+      var sub = e.ok
+        ? [fmtDur(e.durationMs), e.noteCount + ' 音', e.author || ''].filter(Boolean).join(' · ')
+        : esc(e.error || '无法解析');
+      html.push(
+        '<li class="' + cls + '" data-id="' + e.id + '" title="' + esc(e.path) + '">' +
+        '<div class="li-name">' + badge + '<span class="nm">' + esc(e.name) + '</span></div>' +
+        '<div class="li-sub">' + sub + '</div>' +
+        '</li>'
+      );
+    }
+    el.scoreList.innerHTML = html.join('') ||
+      '<li class="empty-state">还没有曲谱<br>导入 .json，或把整个文件夹拖进来</li>';
+  }
+
+  /* ═══════════════════ 选中曲目 ═══════════════════ */
+
+  function selectEntry(id) {
+    var entry = null;
+    for (var i = 0; i < state.entries.length; i++) if (state.entries[i].id === id) { entry = state.entries[i]; break; }
+    if (!entry) return;
+
+    stopPlayback();
+    state.selectedId = id;
+    state.currentEntry = entry;
+    state.current = null;
+    state.sourceJson = null;
+    state.maxNoteMs = 1;
+    state.posMs = 0;
+    state.edit.selNote = null;
+    state.edit.undo = [];
+    state.edit.dirty = false;
+
+    if (!entry.ok) {
+      el.npTitle.textContent = entry.name;
+      el.npSub.textContent = '解析失败：' + (entry.error || '未知原因');
+      el.btnPlay.disabled = true;
+      el.btnStop.disabled = true;
+      el.seek.disabled = true;
+      el.tTotal.textContent = '0:00.0';
+      renderList(); renderDiag(entry, null); updateTrackNav();
+      clearKeys(); drawRoll(0); updateEditBar();
+      return;
+    }
+
+    var sc;
+    try {
+      state.sourceJson = JSON.parse(entry.text);
+      sc = window.BGIParse.parseScore(state.sourceJson, { filename: entry.fileName });
+    } catch (e) {
+      entry.ok = false; entry.error = (e && e.message) || String(e);
+      toast('解析失败：' + entry.error, 'err');
+      renderList(); updateTrackNav();
+      return;
+    }
+    if (!sc.ok) {
+      entry.ok = false; entry.error = sc.error || '解析失败';
+      renderList(); renderDiag(entry, sc); updateTrackNav();
+      toast('解析失败：' + entry.error, 'err');
+      return;
+    }
+
+    /* 复制一份 notes，编辑只动副本，不改原文件 */
+    sc.notes = sc.notes.map(function (n) {
+      return { key: n.key, pitch: n.pitch, start: n.start, end: n.end, velocity: n.velocity };
+    });
+
+    state.current = sc;
+    state.cursor = 0;
+    recomputeDerived();
+
+    el.npTitle.textContent = sc.name || entry.name;
+    el.npSub.textContent = [sc.author || '未知作者', sc.type,
+      'bpm ' + sc.bpm + ' · ticks ' + sc.ticks,
+      sc.stats.noteCount + ' 音', fmtDur(sc.stats.durationMs)].join(' · ');
+
+    el.btnPlay.disabled = false;
+    el.btnStop.disabled = false;
+    el.seek.disabled = false;
+    el.tTotal.textContent = fmtTime(sc.stats.durationMs);
+    el.seek.value = 0;
+    el.seekWrap.style.setProperty('--p', '0');
+
+    renderList();
+    renderDiag(entry, sc);
+    updateTransport();
+    updateTrackNav();
+    updateEditBar();
+    clearKeys();
+    drawRoll(0);
+  }
+
+  /** notes 变了之后统一重算：排序 / 最长时值 / 统计 */
+  function recomputeDerived() {
+    var sc = state.current;
+    if (!sc) return;
+    sc.notes.sort(function (a, b) { return a.start - b.start; });
+    var maxDur = 1, keysUsed = {}, maxPoly = 0, atTime = {};
+    for (var i = 0; i < sc.notes.length; i++) {
+      var n = sc.notes[i];
+      if (n.end - n.start > maxDur) maxDur = n.end - n.start;
+      keysUsed[n.key] = true;
+      atTime[n.start] = (atTime[n.start] || 0) + 1;
+      if (atTime[n.start] > maxPoly) maxPoly = atTime[n.start];
+    }
+    state.maxNoteMs = maxDur;
+    if (!sc.stats) sc.stats = {};
+    sc.stats.noteCount = sc.notes.length;
+    sc.stats.keysUsed = Object.keys(keysUsed);
+    sc.stats.maxPolyphony = maxPoly;
+    var lastEnd = sc.notes.length ? sc.notes[sc.notes.length - 1].end : 0;
+    sc.stats.durationMs = Math.max(sc.stats.durationMs || 0, lastEnd);
+    if (el.tTotal) el.tTotal.textContent = fmtTime(sc.stats.durationMs);
+  }
+
+  /* ═══════════════════ 播放调度 ═══════════════════ */
+
+  function scoreMsAt(ctxTime) { return state.baseScoreMs + (ctxTime - state.baseCtxTime) * 1000 * state.speed; }
+  function ctxTimeAt(scoreMs) { return state.baseCtxTime + (scoreMs - state.baseScoreMs) / 1000 / state.speed; }
+  function duration() { return state.current ? state.current.stats.durationMs : 0; }
+
+  function currentScoreMs() {
+    if (state.playing && state.engine) return clamp(scoreMsAt(engNow()), 0, duration() + 5000);
+    return state.posMs;
+  }
+
+  function startPlayback(fromMs) {
+    var sc = state.current;
+    if (!sc) return;
+    fromMs = clamp(fromMs, 0, duration());
+    state.baseCtxTime = engNow();
+    state.baseScoreMs = fromMs;
+    state.posMs = fromMs;
+    state.cursor = lowerBoundEnd(sc.notes, fromMs);
+    state.playing = true;
+    updateTransport();
+    if (!state.schedTimer) state.schedTimer = setInterval(scheduleTick, SCHED_INTERVAL_MS);
+    scheduleTick();
+  }
+
+  function scheduleTick() {
+    if (!state.playing || !state.current || !state.engine) return;
+    var now = engNow();
+    var limit = now + LOOKAHEAD_SEC;
+    var nowScore = scoreMsAt(now);
+    var notes = state.current.notes;
+
+    while (state.cursor < notes.length) {
+      var n = notes[state.cursor];
+      var w = ctxTimeAt(n.start);
+      if (w > limit) break;
+      var startMs = Math.max(n.start, nowScore);
+      if (n.end > startMs) {
+        var when = Math.max(w, now + 0.004);
+        var dur = Math.max(MIN_NOTE_MS, (n.end - startMs) / 1000 / state.speed);
+        noteOn(n.pitch, when, dur, n.velocity);
+      }
+      state.cursor++;
+    }
+
+    if (nowScore >= duration() + END_PAD_MS) {
+      if (state.loop) {
+        startPlayback(0);
+      } else {
+        var wasAutoplay = state.autoplay;
+        stopPlayback();
+        if (wasAutoplay) jumpTrack(1, true);
+      }
+    }
+  }
+
+  function pausePlayback() {
+    if (!state.playing) return;
+    state.posMs = clamp(scoreMsAt(engNow()), 0, duration());
+    state.playing = false;
+    if (state.engine) { try { state.engine.stopAll(); } catch (_) { } }
+    updateTransport();
+  }
+
+  function stopPlayback() {
+    state.playing = false;
+    if (state.engine) { try { state.engine.stopAll(); } catch (_) { } }
+    if (state.schedTimer) { clearInterval(state.schedTimer); state.schedTimer = null; }
+    state.posMs = 0;
+    state.cursor = 0;
+    updateTransport();
+    clearKeys();
+    drawRoll(0);
+  }
+
+  function seekTo(ms) {
+    if (!state.current) return;
+    ms = clamp(ms, 0, duration());
+    state.posMs = ms;
+    if (state.playing) startPlayback(ms);
+    else {
+      state.cursor = lowerBoundEnd(state.current.notes, ms);
+      updateTransport();
+      drawRoll(ms);
+    }
+  }
+
+  function playCurrent() {
+    if (!state.current) return;
+    if (!ensureEngine()) return;
+    safeResume().then(function () {
+      var from = state.posMs;
+      if (from >= duration() - 10) from = 0;
+      startPlayback(from);
+    });
+  }
+
+  function updateTransport() {
+    if (!el.btnPlay) return;
+    el.btnPlay.classList.toggle('is-playing', state.playing);
+    if (el.btnPlayLabel) el.btnPlayLabel.textContent = state.playing ? '暂停' : '播放';
+    el.btnPlay.disabled = !state.current;
+    el.btnStop.disabled = !state.current;
+  }
+
+  /**
+   * 播放位置 t(ms) 处正在响的音符。
+   * 回溯上界用精确值：只要 t - start >= maxNoteMs，更早的音必然已结束。
+   */
+  function activeAt(t) {
+    var sc = state.current;
+    if (!sc) return [];
+    var notes = sc.notes;
+    var idx = upperBoundStart(notes, t);
+    var out = [], limit = state.maxNoteMs || 1, scanned = 0;
+    for (var i = idx - 1; i >= 0; i--) {
+      var n = notes[i];
+      if (t - n.start >= limit) break;
+      if (n.end > t) out.push(n);
+      if (++scanned > 3000) break;
+    }
+    return out;
+  }
+
+  /**
+   * 停止后（posMs 归零）不画「按住的键」：
+   * 曲谱第一个音常常正好在 t=0 起始，activeAt(0) 会把它判为按住，键会残留。
+   */
+  function shouldShowKeys() { return state.playing || state.posMs > 0; }
+
+  /* ═══════════════════ 21 键 ═══════════════════ */
+
+  var keyEls = {};
+  var keyEnergy = {};
+
+  function buildKeyboard() {
+    var html = [];
+    ROWS.forEach(function (row) {
+      html.push('<div class="kbrow">');
+      html.push('<div class="kbrow-label"><b>' + row.tag + '</b><i>' + row.range + '</i></div>');
+      html.push('<div class="kbkeys">');
+      row.keys.forEach(function (k) {
+        var p = keyToPitch(k);
+        var face =
+          '<span class="k-letter">' + k + '</span>' +
+          '<span class="k-note">' + pitchName(p) + '</span>' +
+          '<span class="k-sol">' + solfege(p) + '</span>';
+        html.push(
+          '<div class="key" data-key="' + k + '" data-pitch="' + p + '" style="--e:0">' +
+            '<div class="key-base">' + face + '</div>' +
+            '<div class="key-lit">' + face + '</div>' +
+          '</div>'
+        );
+      });
+      html.push('</div></div>');
+    });
+    el.keyboard.innerHTML = html.join('');
+    keyEls = {}; keyEnergy = {};
+    Array.prototype.forEach.call(el.keyboard.querySelectorAll('.key'), function (node) {
+      var k = node.getAttribute('data-key');
+      keyEls[k] = node;
+      keyEnergy[k] = 0;
+      node.addEventListener('mousedown', function () { auditionKey(k); });
+    });
+  }
+
+  function auditionKey(k) {
+    if (!ensureEngine()) return;
+    var p = keyToPitch(k), dur = 1.1;
+    state.audition[k] = Date.now() + dur * 1000;
+    safeResume().then(function () { noteOn(p, engNow() + 0.01, dur, 0.95); });
+  }
+
+  /* 语义层：只管 .on（测试与无障碍都靠它） */
+  function setKeys(activeKeys) {
+    state.keysDown = activeKeys;
+    for (var k in keyEls) {
+      var on = !!activeKeys[k];
+      var node = keyEls[k];
+      if (on !== node.__on) {
+        node.__on = on;
+        node.classList.toggle('on', on);
+      }
+    }
+  }
+  function clearKeys() { setKeys({}); }
+
+  /* 视觉层：逐帧指数逼近 --e（与 .on 解耦，停止时立即灭 .on、但视觉平滑收尾） */
+  function animateKeys(dt) {
+    var down = state.keysDown || {};
+    var now = Date.now();
+    var kIn = 1 - Math.exp(-dt / 0.014);
+    var kOut = 1 - Math.exp(-dt / 0.075);
+    for (var k in keyEls) {
+      var aud = state.audition[k];
+      if (aud && aud <= now) state.audition[k] = 0;
+      var target = (down[k] || state.heldKeys[k] || (aud && aud > now)) ? 1 : 0;
+      var e = keyEnergy[k] || 0;
+      if (Math.abs(target - e) < 0.002) {
+        if (e !== target) { keyEnergy[k] = target; keyEls[k].style.setProperty('--e', target.toFixed(3)); }
+        continue;
+      }
+      e += (target - e) * (target > e ? kIn : kOut);
+      keyEnergy[k] = e;
+      keyEls[k].style.setProperty('--e', e.toFixed(3));
+    }
+  }
+
+  /* ═══════════════════ 卷帘 ═══════════════════ */
+
+  function rollGeom() {
+    var cv = el.roll;
+    var W = (cv && cv.clientWidth) || 600;
+    var H = (cv && cv.clientHeight) || 160;
+    var GUT = 40, PAD = 6, TOP = 14;
+    var plotW = Math.max(10, W - GUT - PAD);
+    var plotH = Math.max(10, H - PAD * 2 - TOP);
+    var rowH = plotH / 21;
+    var plotTop = PAD + TOP;
+    var t = currentScoreMs();
+    var t0 = t - state.viewSec * 1000 * 0.25;
+    var t1 = t0 + state.viewSec * 1000;
+    return {
+      W: W, H: H, GUT: GUT, PAD: PAD, TOP: TOP, plotW: plotW, plotH: plotH,
+      rowH: rowH, plotTop: plotTop, t0: t0, t1: t1,
+      xOf: function (ms) { return GUT + ((ms - t0) / (t1 - t0)) * plotW; },
+      timeOf: function (x) { return t0 + ((x - GUT) / plotW) * (t1 - t0); }
+    };
+  }
+
+  function rowAtY(g, y) {
+    var r = Math.floor((g.plotTop + g.plotH - y) / g.rowH);
+    return clamp(r, 0, 20);
+  }
+
+  function initRoll() {
+    state.rollCtx = el.roll.getContext('2d');
+
+    el.roll.addEventListener('click', function (ev) {
+      if (!state.current) return;
+      var r = el.roll.getBoundingClientRect();
+      var g = rollGeom();
+      var x = ev.clientX - r.left, y = ev.clientY - r.top;
+
+      if (state.edit.on) { handleRollEdit(g, x, y); return; }
+      seekTo(g.timeOf(x));
+    });
+
+    window.addEventListener('resize', function () { drawRoll(currentScoreMs()); });
+  }
+
+  /* 编辑模式下的点击：命中音符 -> 选中；空白 -> 新增 */
+  function handleRollEdit(g, x, y) {
+    var t = g.timeOf(x);
+    var hit = hitTest(g, x, y);
+    if (hit) {
+      state.edit.selNote = hit;
+    } else {
+      var row = rowAtY(g, y);
+      if (row >= 0 && row <= 20) {
+        pushUndo();
+        var key = LABELS[row];
+        var start = Math.max(0, Math.round(t / 20) * 20);
+        var dur = state.edit.lastDur || DEFAULT_DUR;
+        var note = { key: key, pitch: keyToPitch(key), start: start, end: start + dur, velocity: 1 };
+        state.current.notes.push(note);
+        state.edit.selNote = note;
+        state.edit.dirty = true;
+        state.edit.lastDur = dur;
+        recomputeDerived();
+        renderDiag(state.currentEntry, state.current);
+      }
+    }
+    updateEditBar();
+    drawRoll(currentScoreMs());
+  }
+
+  function hitTest(g, x, y) {
+    var notes = state.current ? state.current.notes : [];
+    var row = rowAtY(g, y);
+    if (row < 0 || row > 20) return null;
+    var key = LABELS[row];
+    var t = g.timeOf(x);
+    var best = null, bestDist = Infinity;
+    var idx = upperBoundStart(notes, t + 1);
+    for (var i = Math.max(0, idx - 1); i >= 0 && i > idx - 400; i--) {
+      var n = notes[i];
+      if (n.end < t - 400) break;
+      if (n.key !== key) continue;
+      if (t >= n.start - 40 && t <= n.end + 40) {
+        var d = Math.abs((n.start + n.end) / 2 - t);
+        if (d < bestDist) { bestDist = d; best = n; }
+      }
+    }
+    return best;
+  }
+
+  function rr(ctx, x, y, w, h, r) {
+    if (typeof ctx.roundRect === 'function') {
+      ctx.beginPath(); ctx.roundRect(x, y, w, h, Math.min(r, w / 2, h / 2)); ctx.fill();
+    } else ctx.fillRect(x, y, w, h);
+  }
+
+  function drawRoll(t) {
+    var cv = el.roll, ctx = state.rollCtx;
+    if (!cv || !ctx) return;
+    var dpr = window.devicePixelRatio || 1;
+    var g = rollGeom();
+    var W = g.W, H = g.H;
+
+    if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
+      cv.width = Math.round(W * dpr);
+      cv.height = Math.round(H * dpr);
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    var LABEL_FONT = '8.5px "Cascadia Mono", Consolas, monospace';
+
+    ctx.fillStyle = '#fbfaf8';
+    ctx.fillRect(0, 0, W, H);
+
+    /* 左侧音名列 */
+    ctx.fillStyle = '#f5f4f1';
+    ctx.fillRect(0, 0, g.GUT, H);
+
+    /* 21 行：C 行标音名，其余标键字母 */
+    for (var r = 0; r < 21; r++) {
+      var k = LABELS[r], p = keyToPitch(k);
+      var y = g.plotTop + g.plotH - (r + 1) * g.rowH;
+      var isC = (p % 12 === 0);
+
+      if (isC) {
+        ctx.fillStyle = '#f2efe9';
+        ctx.fillRect(g.GUT, y, g.plotW, Math.max(1, g.rowH - 0.5));
+      }
+      ctx.fillStyle = '#e5e2db';
+      ctx.fillRect(g.GUT, y + g.rowH - 0.5, g.plotW, 0.5);
+
+      ctx.textBaseline = 'middle';
+      if (g.rowH >= 6) {
+        if (isC) {
+          ctx.fillStyle = '#8b9099';
+          ctx.font = LABEL_FONT;
+          ctx.fillText(pitchName(p), 5, y + g.rowH / 2);
+        } else {
+          ctx.fillStyle = '#b3b7bd';
+          ctx.font = LABEL_FONT;
+          ctx.fillText(k, 25, y + g.rowH / 2);
+        }
+      }
+    }
+
+    if (!state.current) {
+      ctx.fillStyle = '#b3b7bd';
+      ctx.font = '11.5px "Segoe UI", system-ui, sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('选择一首曲目后，这里会显示音符', g.GUT + 18, H / 2);
+      return;
+    }
+
+    /* 时间刻度 */
+    var stepMs = state.viewSec <= 5 ? 1000 : (state.viewSec <= 12 ? 2000 : 4000);
+    var first = Math.ceil(g.t0 / stepMs) * stepMs;
+    ctx.textBaseline = 'top';
+    for (var tt = first; tt <= g.t1; tt += stepMs) {
+      var xx = g.xOf(tt);
+      ctx.fillStyle = '#e5e2db';
+      ctx.fillRect(xx, g.plotTop, 1, g.plotH);
+      if (g.rowH >= 5) {
+        ctx.fillStyle = '#b3b7bd';
+        ctx.font = LABEL_FONT;
+        ctx.fillText((tt / 1000).toFixed(0) + 's', xx + 4, g.PAD);
+      }
+    }
+
+    /* 播放头 */
+    var hx = g.GUT + g.plotW * 0.25;
+    ctx.fillStyle = '#d6d2c9';
+    ctx.fillRect(hx - 0.5, g.plotTop, 1, g.plotH);
+
+    /* 音符 */
+    var notes = state.current.notes;
+    var barH = Math.max(2, g.rowH - 2);
+    var start = upperBoundStart(notes, g.t0 - 6000);
+    var sel = state.edit.selNote;
+
+    for (var i = start; i < notes.length; i++) {
+      var n = notes[i];
+      if (n.start > g.t1) break;
+      if (n.end < g.t0) continue;
+      var ri = LABELS.indexOf(n.key);
+      if (ri < 0) continue;
+      var yy = g.plotTop + g.plotH - (ri + 1) * g.rowH;
+      var x0 = Math.max(g.GUT, g.xOf(n.start));
+      var x1 = Math.min(W - g.PAD, g.xOf(n.end));
+      if (x1 - x0 < 2) x1 = x0 + 2;
+      var hot = (n.start <= t && n.end > t);
+
+      /* 低/中/高三排用同一个强调色的三级明度，保持淡雅 */
+      ctx.fillStyle = hot ? '#2f6b58'
+        : (n.pitch < 60 ? '#c3d3cb' : (n.pitch < 72 ? '#a9c2b6' : '#8fae9f'));
+      rr(ctx, x0, yy + 1, x1 - x0, barH, 2);
+
+      if (n === sel) {
+        ctx.strokeStyle = '#22252b';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x0 - 1.5, yy + 0.5, x1 - x0 + 3, barH + 1);
+      }
+    }
+
+    /* 播放头顶部小三角 */
+    ctx.fillStyle = '#8b9099';
+    ctx.beginPath();
+    ctx.moveTo(hx - 3.5, g.plotTop - 5);
+    ctx.lineTo(hx + 3.5, g.plotTop - 5);
+    ctx.lineTo(hx, g.plotTop - 0.5);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  /* ═══════════════════ 编辑 ═══════════════════ */
+
+  function pushUndo() {
+    if (!state.current) return;
+    state.edit.undo.push(state.current.notes.map(function (n) {
+      return { key: n.key, pitch: n.pitch, start: n.start, end: n.end, velocity: n.velocity };
+    }));
+    if (state.edit.undo.length > 60) state.edit.undo.shift();
+  }
+
+  function undoEdit() {
+    if (!state.edit.undo.length || !state.current) { toast('没有可撤销的操作'); return; }
+    var snap = state.edit.undo.pop();
+    state.current.notes = snap;
+    state.edit.selNote = null;
+    state.edit.dirty = true;
+    recomputeDerived();
+    updateEditBar();
+    renderDiag(state.currentEntry, state.current);
+    drawRoll(currentScoreMs());
+  }
+
+  function resetEdit() {
+    if (!state.currentEntry) return;
+    selectEntry(state.currentEntry.id);
+    if (state.edit.on) { /* selectEntry 已经重置了编辑态 */ }
+    toast('已还原为原始曲谱', 'ok');
+  }
+
+  function updateEditBar() {
+    if (!el.editBar) return;
+    el.editBar.hidden = !state.edit.on;
+    /* ⚠ 即使不在编辑模式也要维护文案：一是切回来时不会闪旧内容，
+       二是外部（测试 / 诊断）可以随时读到「共 N 音」这个不变量。 */
+    var sel = state.edit.selNote;
+    var total = state.current ? state.current.notes.length : 0;
+    if (sel && state.current && state.current.notes.indexOf(sel) >= 0) {
+      el.editInfo.innerHTML =
+        '已选 <b>' + pitchName(sel.pitch) + '</b> · 起点 <b>' + fmtTime(sel.start) +
+        '</b> · 时值 <b>' + Math.round(sel.end - sel.start) + 'ms</b>' +
+        ' · 共 ' + total + ' 音';
+    } else {
+      el.editInfo.textContent = '未选中音符 · 点击音符选中，点击空白处添加 · 共 ' + total + ' 音';
+    }
+    if (el.btnEditUndo) el.btnEditUndo.disabled = !state.edit.undo.length;
+  }
+
+  function requireSel() {
+    var sel = state.edit.selNote;
+    if (!sel || !state.current || state.current.notes.indexOf(sel) < 0) {
+      toast('先点一个音符');
+      return null;
+    }
+    return sel;
+  }
+
+  function editPitch(dir) {
+    var sel = requireSel(); if (!sel) return;
+    pushUndo();
+    var np = stepPitch(sel.pitch, dir);
+    sel.pitch = np; sel.key = pitchToKey(np);
+    state.edit.dirty = true;
+    recomputeDerived(); updateEditBar();
+    renderDiag(state.currentEntry, state.current); drawRoll(currentScoreMs());
+  }
+
+  function editDur(factor) {
+    var sel = requireSel(); if (!sel) return;
+    pushUndo();
+    var d = Math.max(MIN_NOTE_MS, Math.round((sel.end - sel.start) * factor));
+    sel.end = sel.start + d;
+    state.edit.dirty = true;
+    recomputeDerived(); updateEditBar();
+    renderDiag(state.currentEntry, state.current); drawRoll(currentScoreMs());
+  }
+
+  function editDelete() {
+    var sel = requireSel(); if (!sel) return;
+    pushUndo();
+    var i = state.current.notes.indexOf(sel);
+    state.current.notes.splice(i, 1);
+    state.edit.selNote = null;
+    state.edit.dirty = true;
+    recomputeDerived(); updateEditBar();
+    renderDiag(state.currentEntry, state.current); drawRoll(currentScoreMs());
+  }
+
+  /** 把当前 notes 导出成 BetterGI 的 midi 型 JSON（ticks=1000,bpm=60 ⇒ 1 tick = 1ms） */
+  function buildExportJson() {
+    var sc = state.current;
+    var evs = [];
+    sc.notes.forEach(function (n) {
+      evs.push([Math.max(0, Math.round(n.start)), 0, n.key]);
+      evs.push([Math.max(0, Math.round(n.end)), 1, n.key]);
+    });
+    evs.sort(function (a, b) { return (a[0] - b[0]) || (a[1] - b[1]); });
+    var cur = 0, parts = [];
+    evs.forEach(function (e) {
+      var d = Math.max(0, e[0] - cur);
+      cur = e[0];
+      parts.push((e[1] ? 'U' : 'D') + e[2] + d);
+    });
+    var src = state.sourceJson || {};
+    return {
+      name: (sc.name || '未命名') + '（编辑）',
+      author: src.author || '',
+      instrument: src.instrument || '风物之诗琴',
+      description: '由「风物之诗琴 · 曲谱工坊」编辑导出｜源 type=' + (src.type || sc.type) +
+        '｜' + sc.notes.length + ' 音｜时长 ' + Math.round(sc.stats.durationMs / 1000) + 's',
+      type: 'midi',
+      bpm: 60,
+      ticks: 1000,
+      notes: parts.join('|')
+    };
+  }
+
+  function exportEdited() {
+    if (!state.current) return;
+    var json = buildExportJson();
+    var text = JSON.stringify(json, null, 1);
+    try {
+      var blob = new Blob([text], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = (json.name || '曲谱').replace(/[\\/:*?"<>|]/g, '_') + '.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+      toast('已导出：' + a.download, 'ok', 5000);
+    } catch (e) {
+      toast('导出失败：' + ((e && e.message) || e), 'err');
+    }
+    /* 同时把解析校验结果打出来，方便自查 */
+    try {
+      var check = window.BGIParse.parseScore(JSON.parse(text));
+      console.log('[导出校验] ok=' + check.ok + ' 音符=' + (check.ok ? check.stats.noteCount : check.error));
+    } catch (_) { }
+  }
+
+  /* ═══════════════════ 模式 ═══════════════════ */
+
+  function setMode(edit) {
+    state.edit.on = !!edit;
+    if (el.modePlay) el.modePlay.classList.toggle('is-on', !state.edit.on);
+    if (el.modeEdit) el.modeEdit.classList.toggle('is-on', state.edit.on);
+    if (!state.edit.on) state.edit.selNote = null;
+    if (el.rollHint) {
+      el.rollHint.textContent = state.edit.on
+        ? '点击音符选中 · 点击空白新增 · Delete 删除'
+        : '点击卷帘跳转到该时刻';
+    }
+    el.roll.style.cursor = state.edit.on ? 'cell' : 'crosshair';
+    updateEditBar();
+    drawRoll(currentScoreMs());
+  }
+
+  /* ═══════════════════ 每帧 ═══════════════════ */
+
+  var lastFrameTs = 0;
+
+  function frame(ts) {
+    requestAnimationFrame(frame);
+    if (state.fatal) return;
+
+    if (!ts) ts = (window.performance && performance.now) ? performance.now() : Date.now();
+    var dt = lastFrameTs ? Math.min(0.05, (ts - lastFrameTs) / 1000) : 0.016;
+    lastFrameTs = ts;
+
+    var t = currentScoreMs();
+    if (state.playing) state.posMs = t;
+
+    var act = shouldShowKeys() ? activeAt(t) : [];
+    var keys = {}, top = null;
+    for (var i = 0; i < act.length; i++) {
+      keys[act[i].key] = true;
+      if (!top || act[i].start >= top.start) top = act[i];
+    }
+    setKeys(keys);
+    animateKeys(dt);
+
+    if (top) {
+      var nm = pitchName(top.pitch);
+      if (el.npNoteName.textContent !== nm) el.npNoteName.textContent = nm;
+      el.npNoteName.classList.remove('is-idle');
+      var sol = (solfege(top.pitch) || '') + ' · ' + top.key;
+      if (el.npNoteSol.textContent !== sol) el.npNoteSol.textContent = sol;
+    } else {
+      if (el.npNoteName.textContent !== '—') el.npNoteName.textContent = '—';
+      el.npNoteName.classList.add('is-idle');
+      if (el.npNoteSol.textContent !== '') el.npNoteSol.textContent = '';
+    }
+
+    if (el.liveText) {
+      var want = state.playing ? '播放中'
+        : (state.current ? (state.posMs > 0 ? '已暂停' : '就绪') : '空闲');
+      if (el.liveText.textContent !== want) el.liveText.textContent = want;
+      el.liveText.classList.toggle('is-on', state.playing);
+    }
+
+    var d = duration();
+    var frac;
+    if (state.seeking) {
+      frac = clamp(parseInt(el.seek.value, 10) / 1000, 0, 1);
+      el.tNow.textContent = fmtTime(frac * d);
+    } else {
+      frac = d > 0 ? clamp(t / d, 0, 1) : 0;
+      el.tNow.textContent = fmtTime(t);
+      if (state.current) el.seek.value = Math.round(frac * 1000);
+    }
+    if (el.seekWrap) {
+      var pv = frac.toFixed(4);
+      if (el.seekWrap.__p !== pv) { el.seekWrap.__p = pv; el.seekWrap.style.setProperty('--p', pv); }
+      el.seekWrap.classList.toggle('is-active', !!state.seeking);
+    }
+    if (state.current) {
+      var tt = fmtTime(d);
+      if (el.tTotal.textContent !== tt) el.tTotal.textContent = tt;
+    }
+
+    drawRoll(t);
+  }
+
+  /* ═══════════════════ 诊断 ═══════════════════ */
+
+  function maxDistinctKeys(notes) {
+    var evs = [];
+    for (var i = 0; i < notes.length; i++) {
+      evs.push([notes[i].start, 1, notes[i].key]);
+      evs.push([notes[i].end, 0, notes[i].key]);
+    }
+    evs.sort(function (a, b) { return (a[0] - b[0]) || (a[1] - b[1]); });
+    var held = {}, cnt = 0, max = 0;
+    for (var j = 0; j < evs.length; j++) {
+      var k = evs[j][2];
+      if (evs[j][1]) { held[k] = (held[k] || 0) + 1; if (held[k] === 1) cnt++; }
+      else if (held[k]) { held[k]--; if (!held[k]) cnt--; }
+      if (cnt > max) max = cnt;
+    }
+    return max;
+  }
+
+  function renderDiag(entry, sc) {
+    if (!el.diag) return;
+    var out = [];
+    if (!sc || !sc.ok) {
+      out.push('<b>' + esc(entry ? entry.name : '—') + '</b>');
+      out.push('<span class="fail">解析失败：' + esc((entry && entry.error) || '未知') + '</span>');
+      el.diag.innerHTML = out.join('<br>');
+      return;
+    }
+    var st = sc.stats || {};
+    out.push('type ' + esc(sc.type) + ' · bpm ' + esc(sc.bpm) + ' · ticks ' + esc(sc.ticks));
+    out.push('音符 <b>' + st.noteCount + '</b> · 时长 <b>' + fmtDur(st.durationMs) + '</b>');
+    if (st.durationMs > 0) {
+      out.push('密度 ' + (st.noteCount / (st.durationMs / 1000)).toFixed(2) + ' 音/秒');
+    }
+    out.push('按键 <b>' + (st.keysUsed ? st.keysUsed.length : 0) + '/21</b> · 最大同按 <b>' +
+      maxDistinctKeys(sc.notes) + ' 键</b>');
+    if (sc.warnings && sc.warnings.length) {
+      out.push('<span class="warn">warnings ' + sc.warnings.length + '</span>');
+    } else {
+      out.push('<span class="pass">无 warnings</span>');
+    }
+    el.diag.innerHTML = out.join('<br>');
+  }
+
+  /* ═══════════════════ 音色 ═══════════════════ */
+
+  /** 重建下拉框；preferKey 只在首次或切换后调用 */
+  function fillInstruments(preferKey) {
+    var opts = instrumentOptions();
+    if (!opts.length) {
+      opts = [{ key: SYNTH_PREFIX + 'windsong', label: '合成（备用）', id: 'windsong' }];
+    }
+    el.instrument.innerHTML = '';
+    opts.forEach(function (it) {
+      var o = document.createElement('option');
+      o.value = it.key;
+      o.textContent = it.label;
+      el.instrument.appendChild(o);
+    });
+    var want = preferKey || state.instrumentKey;
+    if (!opts.some(function (x) { return x.key === want; })) want = opts[0].key;
+    state.instrumentKey = want;
+    el.instrument.value = want;
+    return want;
+  }
+
+  /** 用户自己选的采样文件夹：存起来，之后可以再切回来 */
+  async function loadSamples(fileList) {
+    if (!ensureEngine()) return;
+    var files = Array.prototype.slice.call(fileList || []).filter(function (f) {
+      return /\.(wav|mp3|ogg|oga|m4a|aac|flac|webm)$/i.test(f.name);
+    });
+    if (!files.length) { toast('这个文件夹里没有音频文件', 'err'); return; }
+    if (typeof state.engine.loadSampleFiles !== 'function') { toast('当前引擎不支持采样', 'err'); return; }
+
+    setSampleStat('正在解码 ' + files.length + ' 个文件…', '');
+    await safeResume();
+    /* 先试解一次，能认出音高才接管当前音色 */
+    var probe;
+    try {
+      if (typeof state.engine.clearSamples === 'function') state.engine.clearSamples();
+      probe = await state.engine.loadSampleFiles(files);
+    } catch (e) {
+      setSampleStat('加载失败：' + ((e && e.message) || e), 'err');
+      return;
+    }
+    var n = (probe && probe.loaded) || 0;
+    if (!n) {
+      setSampleStat('没有识别出音符采样（文件名需为 C3.wav / A4.mp3 / Z.wav / 48.wav）', 'err');
+      return;
+    }
+    state.customFiles = files;
+    var miss = (probe && probe.missing) || [];
+    fillInstruments('real:custom');
+    state.engine.setInstrument('sample');
+    setSampleStat('自定义采样 · ' + n + ' 音' + (miss.length ? '，未识别 ' + miss.length + ' 个' : ' ✓'), 'ok');
+    toast('自定义采样已启用：' + n + ' 音', 'ok');
+  }
+
+  /* ═══════════════════ 事件接线 ═══════════════════ */
+
+  function bind() {
+    el.scoreList.addEventListener('click', function (ev) {
+      var li = ev.target.closest ? ev.target.closest('li[data-id]') : null;
+      if (!li) return;
+      selectEntry(parseInt(li.getAttribute('data-id'), 10));
+    });
+
+    el.btnPickFiles.addEventListener('click', function () { el.fileInput.click(); });
+    el.btnPickDir.addEventListener('click', function () { el.dirInput.click(); });
+    el.fileInput.addEventListener('change', function (e) { importFiles(e.target.files); e.target.value = ''; });
+    el.dirInput.addEventListener('change', function (e) { importFiles(e.target.files); e.target.value = ''; });
+
+    el.btnLoadSamples.addEventListener('click', function () { el.sampleInput.click(); });
+    el.sampleInput.addEventListener('change', function (e) { loadSamples(e.target.files); e.target.value = ''; });
+
+    el.search.addEventListener('input', function () { state.filter = el.search.value; renderList(); });
+    el.btnClearList.addEventListener('click', function () {
+      state.entries = [];
+      state.selectedId = null;
+      state.current = null;
+      stopPlayback();
+      el.npTitle.textContent = '未选择曲目';
+      el.npSub.textContent = '从左侧导入曲谱，或把文件夹拖进来';
+      el.btnPlay.disabled = true; el.btnStop.disabled = true; el.seek.disabled = true;
+      el.diag.textContent = '—';
+      renderList(); updateTrackNav(); clearKeys(); drawRoll(0); updateEditBar();
+    });
+
+    el.btnPlay.addEventListener('click', function () {
+      if (!state.current) return;
+      if (state.playing) { pausePlayback(); return; }
+      playCurrent();
+    });
+    el.btnStop.addEventListener('click', function () { stopPlayback(); });
+    el.btnPrev.addEventListener('click', function () { jumpTrack(-1, state.playing); });
+    el.btnNext.addEventListener('click', function () { jumpTrack(1, state.playing); });
+
+    el.modePlay.addEventListener('click', function () { setMode(false); });
+    el.modeEdit.addEventListener('click', function () { setMode(true); });
+
+    el.speed.addEventListener('input', function () {
+      var v = parseFloat(el.speed.value);
+      var keep = state.playing ? clamp(scoreMsAt(engNow()), 0, duration()) : state.posMs;
+      state.speed = v;
+      el.speedVal.textContent = v.toFixed(2) + '×';
+      if (state.playing) startPlayback(keep); else state.posMs = keep;
+    });
+    el.loop.addEventListener('change', function () { state.loop = el.loop.checked; });
+    el.autoplay.addEventListener('change', function () { state.autoplay = el.autoplay.checked; });
+    el.playKeys.addEventListener('change', function () {
+      state.playKeys = el.playKeys.checked;
+      if (!state.playKeys) { state.heldKeys = {}; }
+    });
+
+    el.seek.addEventListener('pointerdown', function () { state.seeking = true; });
+    el.seek.addEventListener('input', function () {
+      if (!state.current) return;
+      state.posMs = (parseInt(el.seek.value, 10) / 1000) * duration();
+      el.tNow.textContent = fmtTime(state.posMs);
+    });
+    el.seek.addEventListener('change', function () { state.seeking = false; seekTo(state.posMs); });
+    window.addEventListener('pointerup', function () { state.seeking = false; });
+
+    el.zoom.addEventListener('input', function () {
+      state.viewSec = parseInt(el.zoom.value, 10);
+      el.zoomVal.textContent = state.viewSec + ' 秒';
+    });
+    el.btnFitAll.addEventListener('click', function () {
+      if (!state.current) return;
+      state.viewSec = clamp(Math.round(duration() / 1000), 3, 24);
+      el.zoom.value = state.viewSec;
+      el.zoomVal.textContent = state.viewSec + ' 秒';
+    });
+
+    el.instrument.addEventListener('change', function () {
+      applyInstrument(el.instrument.value);
+    });
+    el.volume.addEventListener('input', function () {
+      state.volume = parseFloat(el.volume.value);
+      if (state.engine) { try { state.engine.setMasterVolume(state.volume); } catch (_) { } }
+    });
+
+    /* 编辑操作 */
+    el.btnPitchDown.addEventListener('click', function () { editPitch(-1); });
+    el.btnPitchUp.addEventListener('click', function () { editPitch(1); });
+    el.btnDurDown.addEventListener('click', function () { editDur(1 / 1.5); });
+    el.btnDurUp.addEventListener('click', function () { editDur(1.5); });
+    el.btnDel.addEventListener('click', editDelete);
+    el.btnEditUndo.addEventListener('click', undoEdit);
+    el.btnEditReset.addEventListener('click', resetEdit);
+    el.btnEditExport.addEventListener('click', exportEdited);
+
+    /* 拖放 */
+    var dragDepth = 0;
+    var veil = document.createElement('div');
+    veil.className = 'drag-veil';
+    veil.textContent = '松开即导入曲谱';
+    veil.hidden = true;
+    document.body.appendChild(veil);
+    function setDragUi(on) {
+      veil.hidden = !on;
+      el.dropzone.classList.toggle('hot', on);
+    }
+    window.addEventListener('dragenter', function (e) { e.preventDefault(); dragDepth++; setDragUi(true); });
+    window.addEventListener('dragover', function (e) { e.preventDefault(); });
+    window.addEventListener('dragleave', function (e) {
+      e.preventDefault();
+      if (--dragDepth <= 0) { dragDepth = 0; setDragUi(false); }
+    });
+    window.addEventListener('drop', function (e) {
+      e.preventDefault(); dragDepth = 0; setDragUi(false);
+      if (!e.dataTransfer) return;
+      collectFromDataTransfer(e.dataTransfer).then(function (files) { importFiles(files); });
+    });
+
+    /* 快捷键 + 键盘弹奏 */
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+  }
+
+  function isTypingTarget(t) {
+    var tag = (t && t.tagName) || '';
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  }
+
+  function onKeyDown(e) {
+    if (isTypingTarget(e.target)) return;
+
+    /* 撤销：Ctrl/⌘ + Z（先于「带修饰键直接放行」判断） */
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault(); undoEdit(); return;
+    }
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+    /* 编辑模式：Delete 删音符 */
+    if (state.edit.on && (e.key === 'Delete' || e.key === 'Backspace')) {
+      e.preventDefault(); editDelete(); return;
+    }
+
+    if (e.code === 'Space') { e.preventDefault(); el.btnPlay.click(); return; }
+    if (e.key === 'Escape') { stopPlayback(); return; }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); seekTo(currentScoreMs() - 5000); return; }
+    if (e.key === 'ArrowRight') { e.preventDefault(); seekTo(currentScoreMs() + 5000); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); jumpTrack(-1, state.playing); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); jumpTrack(1, state.playing); return; }
+
+    /* 键盘弹奏：把字母键映射到 21 键 */
+    if (state.playKeys && e.key && e.key.length === 1) {
+      var k = e.key.toUpperCase();
+      if (FALLBACK_KEY_TO_PITCH[k] != null && !state.heldKeys[k]) {
+        e.preventDefault();
+        state.heldKeys[k] = true;
+        if (!ensureEngine()) return;
+        safeResume().then(function () { noteOn(keyToPitch(k), engNow() + 0.005, 1.4, 0.92); });
+      }
+    }
+  }
+
+  function onKeyUp(e) {
+    if (!e.key || e.key.length !== 1) return;
+    var k = e.key.toUpperCase();
+    if (state.heldKeys[k]) delete state.heldKeys[k];
+  }
+
+  /* ═══════════════════ 致命错误 / 启动 ═══════════════════ */
+
+  function showFatal(msg) {
+    state.fatal = true;
+    var d = document.createElement('div');
+    d.className = 'fatal-layer';
+    d.innerHTML =
+      '<div><h2>播放器无法启动</h2>' +
+      '<p>' + esc(msg) + '</p>' +
+      '<div class="files">请确认 app/ 下有：<br>' +
+      'index.html · css/style.css · js/bettergi-parse.js · js/audio-engine.js · js/app.js' +
+      '</div></div>';
+    document.body.appendChild(d);
+  }
+
+  function init() {
+    cacheDom();
+
+    var missing = [];
+    if (!window.BGIParse || typeof window.BGIParse.parseScore !== 'function') missing.push('js/bettergi-parse.js');
+    if (!window.BGIAudio || typeof window.BGIAudio.createEngine !== 'function') missing.push('js/audio-engine.js');
+    if (missing.length) { showFatal('缺少必需文件：' + missing.join('、')); return; }
+
+    buildKeyboard();
+    initRoll();
+    var firstKey = fillInstruments();
+    el.speedVal.textContent = '1.00×';
+    el.zoomVal.textContent = state.viewSec + ' 秒';
+    el.autoplay.checked = state.autoplay;
+    el.playKeys.checked = state.playKeys;
+
+    renderList();
+    updateTrackNav();
+    updateEditBar();
+    setMode(false);
+    bind();
+    requestAnimationFrame(frame);
+
+    /* 默认音色 = 真实采样（风物之诗琴）。尽量早解码，用户点播放时已就绪。 */
+    if (!sampleManifest()) {
+      setSampleStat('未找到采样数据（js/samples.js）· 只能使用合成音色', 'err');
+    } else {
+      applyInstrument(firstKey);
+    }
+
+    window.addEventListener('beforeunload', function (e) {
+      if (state.edit.dirty) { e.preventDefault(); e.returnValue = ''; }
+    });
+
+    console.log('风物之诗琴 · 曲谱工坊');
+    console.log('自检：BGIParse.selfTest() / BGIAudio.selfTest()');
+    console.log('键盘弹奏：QWERTYU / ASDFGHJ / ZXCVBNM（可关闭）');
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+
+})();

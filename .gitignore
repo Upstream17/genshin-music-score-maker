@@ -1,0 +1,40 @@
+# ══════════════════════════════════════════════════════════════
+#  本仓库只提交：代码 + 文档 + skill + 可公开的曲谱
+#  下面这些是「本地产物 / 第三方原始数据 / 版权受限内容」，不提交
+# ══════════════════════════════════════════════════════════════
+
+# ── 第三方来源原始数据（用 tools/download_sources.sh 自己拉回来）──
+/publicsource/
+
+# ── 含第三方作品改编的曲库（版权原因不进仓；BetterGI 挂这个目录）──
+/library-private/
+
+# ── 历史归档 / 中间产物 / 报告 / 打包 ──
+/archive/
+/reports/
+/dist/
+
+# ── 游戏音频采样（版权归 miHoYo，绝对不提交）──
+#    用 tools/fetch_samples.py 在本机生成
+/app/js/samples*.js
+
+# ── 试听产物 ──
+*.mp3
+*.wav
+试听/
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ── 旧仓库备份（整份留着备查，不进新仓库）──
+.git-old-backup-*/
+
+# ── 系统 / 编辑器 ──
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/

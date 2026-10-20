@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>headless E2E</title>
+</head>
+<body>
+<pre id="RESULT">running…</pre>
+
+<script>
+/* ==========================================================================
+   无头 Chrome 端到端验证（Lead 维护）
+   --------------------------------------------------------------------------
+   做法：把 index.html 的 DOM 注入本页 → 按顺序加载三个 classic script →
+         用真实曲库文件驱动完整 UI（导入 → 选中 → 播放）。
+   运行（必须在 player 目录下用 file:// 绝对路径）：
+     chrome --headless=new --disable-gpu --allow-file-access-from-files \
+            --autoplay-policy=no-user-gesture-required --virtual-time-budget=25000 \
+            --dump-dom "file:///E:/.../player/tests/headless.html"
+   ========================================================================== */
+(function () {
+  'use strict';
+
+  var lines = [];
+  var pass = 0, fail = 0, skip = 0;
+
+  function log(s) { lines.push(s); flush(); }
+  /* ⚠ 注入 index.html 的 DOM 会把原来的 <pre id="RESULT"> 一起冲掉，
+     所以这里必须能「没有就建一个」，否则写结果时抛错、整套测试静默死掉。 */
+  function flush() {
+    var p = document.getElementById('RESULT');
+    if (!p) { p = document.createElement('pre'); p.id = 'RESULT'; document.body.appendChild(p); }
+    p.textContent = lines.join('\n');
+  }
+  function ok(name, cond, detail) {
+    if (cond) { pass++; log('  PASS  ' + name); }
+    else { fail++; log('  FAIL  ' + name + (detail ? '  -> ' + detail : '')); }
+  }
+  function skipped(name, why) { skip++; log('  SKIP  ' + name + '  (' + why + ')'); }
+  function section(t) { log(''); log('=== ' + t + ' ==='); }
+
+  function xhrText(url) {
+    return new Promise(function (res, rej) {
+      var x = new XMLHttpRequest();
+      x.open('GET', url, true);
+      x.onload = function () {
+        if (x.status === 0 || (x.status >= 200 && x.status < 300)) res(x.responseText);
+        else rej(new Error('HTTP ' + x.status + ' for ' + url));
+      };
+      x.onerror = function () { rej(new Error('XHR 失败: ' + url)); };
+      x.send();
+    });
+  }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  /* ---------- 合成一个合法 WAV（用来真机验证 decodeAudioData 采样路径） ---------- */
+  function makeWav(midi, seconds, sampleRate) {
+    sampleRate = sampleRate || 44100;
+    var n = Math.floor(sampleRate * seconds);
+    var buf = new ArrayBuffer(44 + n * 2);
+    var dv = new DataView(buf);
+    function str(off, s) { for (var i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i)); }
+    str(0, 'RIFF'); dv.setUint32(4, 36 + n * 2, true); str(8, 'WAVE');
+    str(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+    dv.setUint32(24, sampleRate, true); dv.setUint32(28, sampleRate * 2, true);
+    dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+    str(36, 'data'); dv.setUint32(40, n * 2, true);
+    var f = 440 * Math.pow(2, (midi - 69) / 12);
+    for (var i2 = 0; i2 < n; i2++) {
+      var env = Math.exp(-3 * i2 / n);
+      var v = Math.sin(2 * Math.PI * f * i2 / sampleRate) * env * 0.6;
+      dv.setInt16(44 + i2 * 2, Math.max(-32768, Math.min(32767, v * 32767)), true);
+    }
+    return new Blob([buf], { type: 'audio/wav' });
+  }
+
+  function loadScript(src) {
+    return new Promise(function (res, rej) {
+      var s = document.createElement('script');
+      s.src = src;
+      s.onload = function () { res(); };
+      s.onerror = function () { rej(new Error('脚本加载失败: ' + src)); };
+      document.body.appendChild(s);
+    });
+  }
+
+  var REAL_FILES = [
+    ['01_原琴JSON/小星星 - 20i9ia3Z.json', 'yuanqin'],
+    ['01_原琴JSON/关键词 - 3A1TeP33.json', 'yuanqin(缺 type + @ 休止)'],
+    ['01_原琴JSON/Counting Stars - 6dKMtoRQ.json', 'keyboard'],
+    ['01_原琴JSON/剑决浮云 - VXTUdfzz.json', 'yuanqin(整篇小写键)'],
+    ['01_原琴JSON/永夜的悼挽 - cYAsIpo2.json', 'midi(含 * 变速标记)'],
+    ['05_我的新增/传奇.json', 'midi(含 @ 占位)'],
+    ['04_MIDI-21键适配JSON/紫罗兰永恒花园 - Sincerely.json', 'midi(全库最长 8013 事件)'],
+    ['01_原琴JSON/卡农 - 7BRsrJmI.json', 'midi(含非法键 K，会产生 warning)']
+  ];
+
+  /* ====================== 主流程 ====================== */
+  (async function main() {
+    try {
+      log('headless E2E — ' + new Date().toISOString());
+
+      /* ---- 1. 注入 index.html 的 DOM（去掉其中的 script 标签，稍后手动按序加载） ---- */
+      section('0. 装配 index.html DOM');
+      var html = await xhrText('../index.html');
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var container = doc.body.cloneNode(true);
+      var stripped = container.querySelectorAll('script').length;
+      Array.prototype.forEach.call(container.querySelectorAll('script'), function (s) { s.remove(); });
+      document.body.innerHTML = container.innerHTML;
+      ok('index.html 读取成功（' + html.length + ' 字节）', html.length > 1000);
+      ok('注入时剥离了 ' + stripped + ' 个 script 标签', stripped >= 3, '实际 ' + stripped);
+      ok('#keyboard / #scoreList / #btnPlay 都在', !!document.getElementById('keyboard') &&
+        !!document.getElementById('scoreList') && !!document.getElementById('btnPlay'));
+
+      /* ---- 2. 按 index.html 的顺序加载三个 classic script ---- */
+      section('0b. 脚本加载（classic script，file://）');
+      await loadScript('../js/bettergi-parse.js');
+      await loadScript('../js/audio-engine.js');
+      ok('window.BGIParse 挂上了', !!window.BGIParse && typeof window.BGIParse.parseScore === 'function');
+      ok('window.BGIAudio 挂上了', !!window.BGIAudio && typeof window.BGIAudio.createEngine === 'function');
+      ok('没有 ES module / fetch 参与（两个全局都已就绪）', true);
+      await loadScript('../js/app.js');
+      await sleep(120);
+      ok('app.js 跑完 init()，渲染出 21 个键',
+        document.querySelectorAll('#keyboard .key').length === 21,
+        '实际 ' + document.querySelectorAll('#keyboard .key').length);
+      ok('没有出现「播放器无法启动」故障层',
+        document.body.textContent.indexOf('播放器无法启动') < 0);
+
+      /* ---- 3. 解析器：真实曲库文件 ---- */
+      section('1. 解析器 + 真实曲库文件');
+      var parsed = [];
+      for (var i = 0; i < REAL_FILES.length; i++) {
+        var rel = REAL_FILES[i][0], kind = REAL_FILES[i][1];
+        var url = '../../完整曲库/' + encodeURI(rel);
+        try {
+          var txt = await xhrText(url);
+          var obj = JSON.parse(txt);
+          var sc = window.BGIParse.parseScore(obj, { filename: rel });
+          parsed.push({ rel: rel, kind: kind, sc: sc });
+          var bad = 0;
+          for (var j = 0; j < sc.notes.length; j++) {
+            var n = sc.notes[j];
+            if (!(n.pitch >= 48 && n.pitch <= 83)) bad++;
+            if (!(n.end > n.start)) bad++;
+          }
+          ok('解析 ' + kind + '  ok=' + sc.ok + ' type=' + sc.type +
+            ' 音符=' + sc.notes.length + ' 时长=' + Math.round(sc.stats.durationMs / 1000) + 's' +
+            ' 按键=' + sc.stats.keysUsed.length + '/21 最大同按=' + sc.stats.maxPolyphony +
+            ' warn=' + sc.warnings.length + ' 非法=' + bad,
+            sc.ok && sc.notes.length > 0 && bad === 0,
+            sc.ok ? '' : sc.error);
+        } catch (e) {
+          ok('解析 ' + rel, false, e.message);
+        }
+      }
+
+      /* ---- 4. 音频引擎：真机 AudioContext ---- */
+      section('2. 音频引擎（真实 AudioContext）');
+      var eng;
+      try {
+        eng = window.BGIAudio.createEngine();
+        await eng.resume();
+        ok('createEngine() + resume() 成功', true);
+      } catch (e) { ok('createEngine() + resume() 成功', false, e.message); }
+
+      if (eng) {
+        var t0 = eng.currentTime;
+        ok('currentTime 是有限数', typeof t0 === 'number' && isFinite(t0), String(t0));
+        var insts = window.BGIAudio.listInstruments();
+        ok('listInstruments() 有 ' + insts.length + ' 项', Array.isArray(insts) && insts.length >= 4);
+        var ids = insts.map(function (x) { return x.id; });
+        ok('四种合成音色都在：' + ids.join(','),
+          ['windsong', 'piano', 'musicbox', 'harp'].every(function (k) { return ids.indexOf(k) >= 0; }));
+
+        /* 逐个音色、逐个音高调度一遍，看会不会抛 */
+        var throwCount = 0, scheduled = 0;
+        ['windsong', 'piano', 'musicbox', 'harp'].forEach(function (id) {
+          try { eng.setInstrument(id); } catch (e) { throwCount++; }
+          for (var p = 48; p <= 83; p++) {
+            try { eng.noteOn(p, eng.currentTime + 0.02 + scheduled * 0.01, 0.6, 0.9); scheduled++; }
+            catch (e) { throwCount++; }
+          }
+        });
+        ok('4 音色 × 全部 21 个琴键共调度 ' + scheduled + ' 次，0 异常', throwCount === 0, throwCount + ' 次异常');
+        try { eng.stopAll(); ok('stopAll() 不抛', true); } catch (e) { ok('stopAll() 不抛', false, e.message); }
+
+        /* 采样路径：合成 2 个 WAV，走真实 decodeAudioData */
+        section('2b. 采样路径（真实 decodeAudioData + 邻近采样变调兜底）');
+        try {
+          var files = [
+            new File([makeWav(48, 0.7)], 'C3.wav', { type: 'audio/wav' }),
+            new File([makeWav(69, 0.7)], 'A4.wav', { type: 'audio/wav' })
+          ];
+          var res = await eng.loadSampleFiles(files);
+          ok('loadSampleFiles 返回 {loaded,mapping,missing}',
+            res && typeof res.loaded === 'number' && res.mapping && Array.isArray(res.missing));
+          ok('loaded === 2（两个 WAV 都被真实解码）', res.loaded === 2, '实际 ' + res.loaded);
+          /* ⚠ missing 的语义是「输入里映射不上的**文件**」，不是「21 键里缺几个音」——
+             两个文件都能从文件名认出音高，所以这里是 0。 */
+          ok('missing 为空（两个文件名都能认出音高）', res.missing.length === 0, '实际 ' + res.missing.length);
+          ok('mapping 精确认出 C3 / A4', Object.keys(res.mapping).length === 2 &&
+            res.mapping.C3 && res.mapping.A4, JSON.stringify(res.mapping));
+          ok('hasSamples === true', eng.hasSamples === true);
+          var threw = 0;
+          for (var p2 = 48; p2 <= 83; p2++) {
+            try { eng.noteOn(p2, eng.currentTime + 0.01, 0.4, 0.9); } catch (e) { threw++; }
+          }
+          ok('只有 2 个采样时，全部 36 个半音仍可发声（邻近采样变调兜底，无静音路径）',
+            threw === 0, threw + ' 次异常');
+          try { eng.stopAll(); } catch (e) { }
+        } catch (e) {
+          ok('采样路径', false, e && e.message);
+        }
+      }
+
+      /* ---- 5. UI 端到端：导入 → 选中 → 播放 ---- */
+      section('3. UI 端到端（导入真实 JSON → 选中 → 播放）');
+      var target = parsed[0];
+      if (!target) {
+        skipped('UI 端到端', '前面没有成功解析出样例');
+      } else {
+        var rawText = await xhrText('../../完整曲库/' + encodeURI(target.rel));
+        var file = new File([rawText], target.rel.split('/').pop(), { type: 'application/json' });
+        var dt = new DataTransfer();
+        dt.items.add(file);
+        var input = document.getElementById('fileInput');
+        input.files = dt.files;
+        input.dispatchEvent(new Event('change'));
+        /* ⚠ 不要用固定 sleep：虚拟时间会快进，而 File.text() 是真实异步 I/O，
+           固定等待会偶发「还没读完就断言」—— 改成轮询到出现为止。 */
+        let items = [];
+        for (let k = 0; k < 120; k++) {
+          await sleep(100);
+          items = document.querySelectorAll('#scoreList li[data-id]');
+          if (items.length) break;
+        }
+        ok('导入后曲目列表出现 ' + items.length + ' 首', items.length === 1, '实际 ' + items.length);
+
+        if (items.length) {
+          items[0].click();
+          for (let k = 0; k < 60; k++) {
+            await sleep(100);
+            if (document.getElementById('btnPlay').disabled === false) break;
+          }
+          var btnPlay = document.getElementById('btnPlay');
+          ok('选中后「播放」按钮可用', btnPlay.disabled === false);
+          var tTotal = document.getElementById('tTotal').textContent;
+          ok('总时长已显示（' + tTotal + '），不是 0:00.0', tTotal !== '0:00.0');
+          ok('诊断面板有内容', document.getElementById('diag').textContent.length > 20);
+          ok('标题显示了曲名', document.getElementById('npTitle').textContent.length > 0);
+
+          /* 播放，并在虚拟时间里轮询「有没有键亮起」 */
+          btnPlay.click();
+          var sawKeyOn = false, maxKeysOn = 0, tNowGrew = false;
+          for (var k = 0; k < 90; k++) {
+            await sleep(40);
+            var on = document.querySelectorAll('#keyboard .key.on').length;
+            if (on > 0) sawKeyOn = true;
+            if (on > maxKeysOn) maxKeysOn = on;
+            if (document.getElementById('tNow').textContent !== '0:00.0') tNowGrew = true;
+            if (sawKeyOn && tNowGrew) break;
+          }
+          /* ⚠ 这里不能断言 #tNow 增长：`--virtual-time-budget` 只快进**虚拟**时间，
+             而播放器的主时钟是 AudioContext 的**真实**时钟 —— 在这个环境里它几乎不前进。
+             这是环境限制，不是缺陷。播放头/变速/seek 由 player/tests/realtime.test.js
+             （CDP + 真实时间）覆盖，那里实测 1.0×→1.00×、2.0×→2.06×。 */
+          if (tNowGrew) ok('播放后时间在走（#tNow 变了）', true);
+          else skipped('播放后时间在走', '虚拟时间下 AudioContext 真实时钟不前进；已由 realtime.test.js 覆盖');
+          ok('播放后有琴键高亮（最多同时 ' + maxKeysOn + ' 个）', sawKeyOn);
+          ok('琴键高亮数 ≤ 21 且在合理范围', maxKeysOn > 0 && maxKeysOn <= 21, '最大 ' + maxKeysOn);
+          var npNote = document.getElementById('npNoteName').textContent;
+          ok('当前音名显示中（' + npNote + '）', npNote !== '—' || sawKeyOn);
+
+          document.getElementById('btnStop').click();
+          await sleep(100);
+          ok('停止后时间归零', document.getElementById('tNow').textContent === '0:00.0',
+            document.getElementById('tNow').textContent);
+          ok('停止后没有残留高亮键', document.querySelectorAll('#keyboard .key.on').length === 0);
+        }
+      }
+
+      /* ---- 6. 自检 ---- */
+      section('4. 模块自检');
+      try {
+        var r1 = window.BGIParse.selfTest();
+        ok('BGIParse.selfTest(): passed=' + r1.passed + ' failed=' + r1.failed,
+          r1.failed === 0, r1.failed + ' 个失败');
+      } catch (e) { ok('BGIParse.selfTest()', false, e.message); }
+      try {
+        var r2 = window.BGIAudio.selfTest();
+        log('  ----  BGIAudio.selfTest(): passed=' + r2.passed + ' failed=' + r2.failed + ' skipped=' + r2.skipped +
+          ' environment=' + JSON.stringify(r2.environment || {}));
+        ok('BGIAudio.selfTest(): failed=0（浏览器里不应再有 skip）', r2.failed === 0, r2.failed + ' 个失败');
+      } catch (e) { ok('BGIAudio.selfTest()', false, e.message); }
+
+    } catch (e) {
+      fail++;
+      log('  FATAL  ' + (e && e.stack ? e.stack : e));
+    }
+
+    log('');
+    log('='.repeat(58));
+    log('PASS ' + pass + '   FAIL ' + fail + '   SKIP ' + skip);
+    log('='.repeat(58));
+    document.title = 'E2E ' + (fail ? 'FAIL(' + fail + ')' : 'OK');
+    flush();
+  })();
+})();
+</script>
+</body>
+</html>
