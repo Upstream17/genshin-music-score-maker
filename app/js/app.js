@@ -1614,7 +1614,7 @@
       if (state.edit.dirty) { e.preventDefault(); e.returnValue = ''; }
     });
 
-    console.log('风物之诗琴 · 曲谱工坊');
+    console.log('原神琴谱制谱器 · 演奏台');
     console.log('自检：BGIParse.selfTest() / BGIAudio.selfTest()');
     console.log('键盘弹奏：QWERTYU / ASDFGHJ / ZXCVBNM（可关闭）');
   }
