@@ -383,7 +383,10 @@
     return new Promise(function (resolve) {
       if (!entry) { resolve(); return; }
       if (entry.isFile) {
-        entry.file(function (f) { out.push(f); resolve(); }, function () { resolve(); });
+        entry.file(function (f) { out.push(f); resolve(); }, function (err) {
+          console.warn('读取文件失败: ' + entry.name, err);
+          resolve();
+        });
       } else if (entry.isDirectory) {
         var reader = entry.createReader(), all = [];
         (function readBatch() {
@@ -394,7 +397,10 @@
             }
             all = all.concat(batch);
             readBatch();
-          }, function () { resolve(); });
+          }, function (err) {
+            console.warn('读取目录失败: ' + entry.name, err);
+            resolve();
+          });
         })();
       } else { resolve(); }
     });
@@ -402,25 +408,83 @@
 
   function collectFromDataTransfer(dt) {
     return new Promise(function (resolve) {
-      var out = [], items = dt.items;
-      if (!items || !items.length) { resolve(Array.prototype.slice.call(dt.files || [])); return; }
-      var entries = [], direct = [];
+      if (!dt) { resolve([]); return; }
+      var items = dt.items;
+
+      // 1. 若浏览器不支持 DataTransferItemList 或为空，直接使用 dt.files
+      if (!items || !items.length) {
+        resolve(Array.prototype.slice.call(dt.files || []));
+        return;
+      }
+
+      // 2. 检查是否有目录条目
+      var hasDir = false;
       for (var i = 0; i < items.length; i++) {
-        var it = items[i];
+        if (items[i].kind === 'file') {
+          var testEn = items[i].webkitGetAsEntry ? items[i].webkitGetAsEntry() : null;
+          if (testEn && testEn.isDirectory) {
+            hasDir = true;
+            break;
+          }
+        }
+      }
+
+      // 3. 若仅拖入了文件（无目录），dt.files / getAsFile 是同步原生 File 句柄，
+      //    在本地 file:// 协议和各种浏览器下均可直接读取，绝不会遭遇 FileSystemEntry.file 的 EncodingError！
+      if (!hasDir) {
+        var directFiles = [];
+        if (dt.files && dt.files.length) {
+          directFiles = Array.prototype.slice.call(dt.files);
+        } else {
+          for (var j = 0; j < items.length; j++) {
+            if (items[j].kind === 'file') {
+              var df = items[j].getAsFile ? items[j].getAsFile() : null;
+              if (df) directFiles.push(df);
+            }
+          }
+        }
+        resolve(directFiles);
+        return;
+      }
+
+      // 4. 若包含目录：对普通文件优先使用 getAsFile / dt.files，仅对目录走 walkEntry
+      var out = [], dirEntries = [];
+      for (var k = 0; k < items.length; k++) {
+        var it = items[k];
         if (it.kind !== 'file') continue;
         var en = it.webkitGetAsEntry ? it.webkitGetAsEntry() : null;
-        if (en) entries.push(en);
-        else { var f = it.getAsFile(); if (f) direct.push(f); }
+        if (en && en.isDirectory) {
+          dirEntries.push(en);
+        } else {
+          var f = it.getAsFile ? it.getAsFile() : null;
+          if (!f && dt.files && dt.files[k]) f = dt.files[k];
+          if (f) out.push(f);
+          else if (en) dirEntries.push(en);
+        }
       }
-      out = out.concat(direct);
-      Promise.all(entries.map(function (e) { return walkEntry(e, out); }))
-        .then(function () { resolve(out); });
+
+      if (!dirEntries.length) {
+        resolve(out);
+        return;
+      }
+
+      Promise.all(dirEntries.map(function (e) { return walkEntry(e, out); }))
+        .then(function () {
+          // 若目录递归在沙箱（如 file://）下受限导致未能读取任何文件，但 dt.files 有记录，尝试兜底
+          if (!out.length && dt.files && dt.files.length) {
+            out = Array.prototype.slice.call(dt.files);
+          }
+          resolve(out);
+        });
     });
   }
 
   async function importFiles(fileList) {
     var files = Array.prototype.slice.call(fileList || []);
-    if (!files.length) return;
+    if (!files.length) {
+      toast('未检测到可导入的文件。若拖入的是文件夹，建议点击左侧「选择文件夹」按钮导入', 'err', 4500);
+      return;
+    }
     if (files.length > MAX_IMPORT) {
       toast('一次拖入 ' + files.length + ' 个文件，超过上限 ' + MAX_IMPORT, 'err');
       return;
@@ -1968,18 +2032,54 @@
     document.body.appendChild(veil);
     function setDragUi(on) {
       veil.hidden = !on;
-      el.dropzone.classList.toggle('hot', on);
+      if (el.dropzone) el.dropzone.classList.toggle('hot', on);
     }
-    window.addEventListener('dragenter', function (e) { e.preventDefault(); dragDepth++; setDragUi(true); });
-    window.addEventListener('dragover', function (e) { e.preventDefault(); });
-    window.addEventListener('dragleave', function (e) {
+
+    function onDragEnter(e) {
       e.preventDefault();
-      if (--dragDepth <= 0) { dragDepth = 0; setDragUi(false); }
-    });
-    window.addEventListener('drop', function (e) {
-      e.preventDefault(); dragDepth = 0; setDragUi(false);
+      dragDepth++;
+      setDragUi(true);
+    }
+    function onDragOver(e) {
+      e.preventDefault();
+      if (e.dataTransfer) {
+        try { e.dataTransfer.dropEffect = 'copy'; } catch (_) {}
+      }
+    }
+    function onDragLeave(e) {
+      e.preventDefault();
+      if (--dragDepth <= 0) {
+        dragDepth = 0;
+        setDragUi(false);
+      }
+    }
+    function onDrop(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      dragDepth = 0;
+      setDragUi(false);
       if (!e.dataTransfer) return;
-      collectFromDataTransfer(e.dataTransfer).then(function (files) { importFiles(files); });
+      collectFromDataTransfer(e.dataTransfer)
+        .then(function (files) { return importFiles(files); })
+        .catch(function (err) {
+          console.error('拖拽导入失败：', err);
+          toast('拖拽导入失败：' + ((err && err.message) || err), 'err');
+        });
+    }
+
+    window.addEventListener('dragenter', onDragEnter);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
+
+    document.addEventListener('dragover', function (e) {
+      e.preventDefault();
+      if (e.dataTransfer) {
+        try { e.dataTransfer.dropEffect = 'copy'; } catch (_) {}
+      }
+    });
+    document.addEventListener('drop', function (e) {
+      e.preventDefault();
     });
 
     /* 快捷键 + 键盘弹奏 */

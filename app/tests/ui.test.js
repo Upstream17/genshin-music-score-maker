@@ -363,6 +363,31 @@ function pageScript(scoreUrls) {
       if (line.startsWith('PASS  ')) PASS++;
       else if (line.startsWith('FAIL  ')) FAIL++;
     }
+
+    /* ───────── 9. 原生 OS 拖放导入验收（验证非 fileInput 的真实 DragEvent） ───────── */
+    const dragScorePath = path.join(PLAYER, '..', 'library-private', pumps[0]);
+    await cdp.send('Input.dispatchDragEvent', {
+      type: 'dragEnter', x: 400, y: 400,
+      data: { items: [], files: [dragScorePath], dragOperationsMask: 1 }
+    });
+    await cdp.send('Input.dispatchDragEvent', {
+      type: 'dragOver', x: 400, y: 400,
+      data: { items: [], files: [dragScorePath], dragOperationsMask: 1 }
+    });
+    await cdp.send('Input.dispatchDragEvent', {
+      type: 'drop', x: 400, y: 400,
+      data: { items: [], files: [dragScorePath], dragOperationsMask: 1 }
+    });
+    await sleep(600);
+    const dropCheck = await cdp.send('Runtime.evaluate', {
+      expression: `JSON.stringify({
+        toast: document.querySelector('.toast') ? document.querySelector('.toast').textContent : '',
+        listCount: document.querySelectorAll('#scoreList li[data-id]').length
+      })`,
+      returnByValue: true
+    });
+    const dc = JSON.parse(dropCheck.result.value || '{}');
+    ok('原生 OS 拖拽文件成功导入/热更新', /更新|导入/.test(dc.toast), 'toast: ' + dc.toast);
     exitCode = FAIL ? 1 : 0;
   } catch (e) {
     console.error('失败: ' + (e && e.message));
