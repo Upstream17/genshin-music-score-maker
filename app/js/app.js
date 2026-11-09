@@ -52,7 +52,7 @@
       'search', 'listCount', 'btnClearList', 'scoreList',
       'npTitle', 'npSub', 'npNoteName', 'npNoteSol',
       'btnPlay', 'btnPlayLabel', 'btnStop', 'btnPrev', 'btnNext', 'trackIndex',
-      'speed', 'speedVal', 'loop', 'autoplay',
+      'speed', 'speedVal', 'loop', 'autoplay', 'btnPlayMode', 'playModeLabel',
       'tNow', 'tTotal', 'seek', 'seekWrap', 'seekFill', 'seekThumb',
       'keyboard', 'playKeys', 'playHint',
       'modePlay', 'modeEdit',
@@ -87,6 +87,7 @@
     speed: 1,
     loop: false,
     autoplay: true,
+    playMode: 'list',       /* 'list' 列表循环 | 'single' 单曲循环 | 'order' 顺序播放 */
 
     viewSec: 8,
     baseCtxTime: 0,
@@ -280,6 +281,7 @@
       synths = (window.BGIAudio.listInstruments() || []).filter(function (x) { return x.kind === 'synth'; });
     } catch (_) { }
     synths.forEach(function (s) {
+      if (s.id === 'windsong') return; /* 用户要求：合成 风物之诗琴是历史遗留，删去 */
       out.push({
         key: SYNTH_PREFIX + s.id,
         label: '合成（备用）· ' + s.name.replace(/[（(].*?[)）]/g, ''),
@@ -435,7 +437,7 @@
     var seen = {};
     state.entries.forEach(function (e) { seen[e.path] = true; });
 
-    var added = 0, dup = 0, failed = 0, errors = [];
+    var added = 0, updated = 0, failed = 0, errors = [];
 
     for (var i = 0; i < picked.json.length; i++) {
       var f = picked.json[i];
@@ -443,27 +445,66 @@
       el.importBar.style.width = Math.round(((i + 1) / picked.json.length) * 100) + '%';
       el.importText.textContent = (i + 1) + ' / ' + picked.json.length + ' · ' + f.name;
 
-      if (seen[path]) { dup++; continue; }
+      var existing = null;
+      for (var j = 0; j < state.entries.length; j++) {
+        var ee = state.entries[j];
+        if (ee.path === path || ee.fileName === f.name) {
+          existing = ee;
+          break;
+        }
+      }
+
       try {
         var text = await readText(f);
         var obj = JSON.parse(text);
         var sc = window.BGIParse.parseScore(obj, { filename: f.name });
-        state.entries.push({
-          id: state.nextId++,
-          path: path,
-          fileName: f.name,
-          name: sc.ok ? (sc.name || f.name.replace(/\.json$/i, '')) : f.name.replace(/\.json$/i, ''),
-          author: sc.author || '',
-          type: sc.type || 'unknown',
-          ok: !!sc.ok,
-          error: sc.error || '',
-          noteCount: sc.stats ? sc.stats.noteCount : 0,
-          durationMs: sc.stats ? sc.stats.durationMs : 0,
-          instrument: sc.instrument || '',
-          text: text
-        });
-        seen[path] = true;
-        added++;
+
+        if (existing) {
+          existing.name = sc.ok ? (sc.name || f.name.replace(/\.json$/i, '')) : f.name.replace(/\.json$/i, '');
+          existing.author = sc.author || '';
+          existing.type = sc.type || 'unknown';
+          existing.ok = !!sc.ok;
+          existing.error = sc.error || '';
+          existing.noteCount = sc.stats ? sc.stats.noteCount : 0;
+          existing.durationMs = sc.stats ? sc.stats.durationMs : 0;
+          existing.instrument = sc.instrument || '';
+          existing.text = text;
+          updated++;
+
+          if (state.selectedId === existing.id) {
+            state.sourceJson = obj;
+            sc.notes = sc.notes.map(function (n) {
+              return { key: n.key, pitch: n.pitch, start: n.start, end: n.end, velocity: n.velocity };
+            });
+            state.current = sc;
+            state.currentEntry = existing;
+            recomputeDerived();
+            renderDiag(existing, sc);
+            updateEditBar();
+            drawRoll(currentScoreMs());
+            if (el.npTitle) el.npTitle.textContent = sc.name || existing.name;
+            if (el.npSub) el.npSub.textContent = [sc.author || '未知作者', sc.type,
+              'bpm ' + sc.bpm + ' · ticks ' + sc.ticks,
+              sc.stats.noteCount + ' 音', fmtDur(sc.stats.durationMs)].join(' · ');
+            if (el.tTotal) el.tTotal.textContent = fmtTime(sc.stats.durationMs);
+          }
+        } else {
+          state.entries.push({
+            id: state.nextId++,
+            path: path,
+            fileName: f.name,
+            name: sc.ok ? (sc.name || f.name.replace(/\.json$/i, '')) : f.name.replace(/\.json$/i, ''),
+            author: sc.author || '',
+            type: sc.type || 'unknown',
+            ok: !!sc.ok,
+            error: sc.error || '',
+            noteCount: sc.stats ? sc.stats.noteCount : 0,
+            durationMs: sc.stats ? sc.stats.durationMs : 0,
+            instrument: sc.instrument || '',
+            text: text
+          });
+          added++;
+        }
       } catch (e) {
         failed++;
         if (errors.length < 6) errors.push(f.name + '：' + ((e && e.message) || e));
@@ -475,10 +516,12 @@
     sortEntries();
     renderList();
 
-    var msg = '导入 ' + added + ' 首';
-    if (dup) msg += ' · 重复 ' + dup;
-    if (failed) msg += ' · 失败 ' + failed;
-    if (picked.other) msg += ' · 忽略 ' + picked.other;
+    var msgParts = [];
+    if (updated) msgParts.push('更新 ' + updated + ' 首');
+    if (added) msgParts.push('导入 ' + added + ' 首');
+    if (failed) msgParts.push('失败 ' + failed);
+    if (picked.other) msgParts.push('忽略 ' + picked.other);
+    var msg = msgParts.join(' · ') || '曲谱已是最新';
     toast(msg, failed ? 'err' : 'ok', 4200);
 
     if (errors.length) console.warn('导入失败样例：', errors);
@@ -531,7 +574,13 @@
     var cur = playlistPos().i;
     var next = cur < 0 ? 0 : cur + delta;
     if (next < 0) next = list.length - 1;
-    if (next >= list.length) next = 0;
+    if (next >= list.length) {
+      if (state.playMode === 'order') {
+        stopPlayback();
+        return;
+      }
+      next = 0;
+    }
     var wasPlaying = state.playing || startPlaying;
     selectEntry(list[next].id);
     scrollListTo(list[next].id);
@@ -716,8 +765,17 @@
     }
 
     if (nowScore >= duration() + END_PAD_MS) {
-      if (state.loop) {
+      if (state.playMode === 'single' || state.loop) {
         startPlayback(0);
+      } else if (state.playMode === 'order') {
+        var list = playableEntries();
+        var cur = playlistPos().i;
+        if (cur >= 0 && cur + 1 >= list.length) {
+          stopPlayback();
+        } else {
+          stopPlayback();
+          jumpTrack(1, true);
+        }
       } else {
         var wasAutoplay = state.autoplay;
         stopPlayback();
@@ -773,6 +831,57 @@
     if (el.btnPlayLabel) el.btnPlayLabel.textContent = state.playing ? '暂停' : '播放';
     el.btnPlay.disabled = !state.current;
     el.btnStop.disabled = !state.current;
+  }
+
+  /* ═══════════════════ 播放模式（列表循环 / 单曲循环 / 顺序播放） ═══════════════════ */
+
+  var PLAY_MODES = [
+    {
+      id: 'list',
+      label: '列表循环',
+      title: '播放模式：列表循环（点击切换）',
+      icon: '<svg class="ico ico-mode" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>'
+    },
+    {
+      id: 'single',
+      label: '单曲循环',
+      title: '播放模式：单曲循环（点击切换）',
+      icon: '<svg class="ico ico-mode" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/><text x="12" y="15" font-size="7.5" font-family="sans-serif" font-weight="700" fill="currentColor" stroke="none" text-anchor="middle">1</text></svg>'
+    },
+    {
+      id: 'order',
+      label: '顺序播放',
+      title: '播放模式：顺序播放（点击切换）',
+      icon: '<svg class="ico ico-mode" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="11" y2="18"/><polyline points="16 15 19 18 16 21"/></svg>'
+    }
+  ];
+
+  function setPlayMode(mode) {
+    if (!mode || !PLAY_MODES.some(function (m) { return m.id === mode; })) mode = 'list';
+    state.playMode = mode;
+    state.loop = (mode === 'single');
+    state.autoplay = (mode === 'list');
+
+    if (el.loop) el.loop.checked = state.loop;
+    if (el.autoplay) el.autoplay.checked = state.autoplay;
+
+    var cur = PLAY_MODES.filter(function (m) { return m.id === mode; })[0];
+    if (el.btnPlayMode && cur) {
+      el.btnPlayMode.title = cur.title;
+      el.btnPlayMode.innerHTML = cur.icon + '<span id="playModeLabel">' + cur.label + '</span>';
+      el.playModeLabel = document.getElementById('playModeLabel');
+    }
+  }
+
+  function cyclePlayMode() {
+    var curIdx = 0;
+    for (var i = 0; i < PLAY_MODES.length; i++) {
+      if (PLAY_MODES[i].id === state.playMode) { curIdx = i; break; }
+    }
+    var nextIdx = (curIdx + 1) % PLAY_MODES.length;
+    setPlayMode(PLAY_MODES[nextIdx].id);
+    var cur = PLAY_MODES[nextIdx];
+    toast('已切换为：' + cur.label, 'ok', 1600);
   }
 
   /**
@@ -1690,7 +1799,7 @@
   function fillInstruments(preferKey) {
     var opts = instrumentOptions();
     if (!opts.length) {
-      opts = [{ key: SYNTH_PREFIX + 'windsong', label: '合成（备用）', id: 'windsong' }];
+      opts = [{ key: SYNTH_PREFIX + 'harp', label: '合成（备用）· 竖琴', id: 'harp' }];
     }
     el.instrument.innerHTML = '';
     opts.forEach(function (it) {
@@ -1788,8 +1897,15 @@
       el.speedVal.textContent = v.toFixed(2) + '×';
       if (state.playing) startPlayback(keep); else state.posMs = keep;
     });
-    el.loop.addEventListener('change', function () { state.loop = el.loop.checked; });
-    el.autoplay.addEventListener('change', function () { state.autoplay = el.autoplay.checked; });
+    if (el.btnPlayMode) el.btnPlayMode.addEventListener('click', cyclePlayMode);
+    el.loop.addEventListener('change', function () {
+      if (el.loop.checked) setPlayMode('single');
+      else setPlayMode(el.autoplay.checked ? 'list' : 'order');
+    });
+    el.autoplay.addEventListener('change', function () {
+      if (el.autoplay.checked) setPlayMode('list');
+      else setPlayMode(el.loop.checked ? 'single' : 'order');
+    });
     el.playKeys.addEventListener('change', function () {
       state.playKeys = el.playKeys.checked;
       if (!state.playKeys) { state.heldKeys = {}; }
@@ -1981,7 +2097,7 @@
     var firstKey = fillInstruments();
     el.speedVal.textContent = '1.00×';
     el.zoomVal.textContent = state.viewSec + ' 秒';
-    el.autoplay.checked = state.autoplay;
+    setPlayMode('list');
     el.playKeys.checked = state.playKeys;
 
     renderList();

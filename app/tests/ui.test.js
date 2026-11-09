@@ -256,6 +256,43 @@ function pageScript(scoreUrls) {
     await sleep(200);
     ok('停止后时间归零', $('#tNow').textContent === '0:00.0', $('#tNow').textContent);
 
+    /* ───────── 7. 3 模播放按钮循环切换 ───────── */
+    const modeBtn = $('#btnPlayMode');
+    ok('默认模式为「列表循环」', /列表循环/.test(modeBtn.textContent) && $('#autoplay').checked && !$('#loop').checked);
+    modeBtn.click();
+    await sleep(100);
+    ok('点击一切到「单曲循环」', /单曲循环/.test(modeBtn.textContent) && $('#loop').checked && !$('#autoplay').checked);
+    modeBtn.click();
+    await sleep(100);
+    ok('点击二切到「顺序播放」', /顺序播放/.test(modeBtn.textContent) && !$('#loop').checked && !$('#autoplay').checked);
+    modeBtn.click();
+    await sleep(100);
+    ok('点击三回回「列表循环」', /列表循环/.test(modeBtn.textContent) && $('#autoplay').checked && !$('#loop').checked);
+
+    /* ───────── 8. 方案 B 热更新（重新导入同名曲目，原地热重载） ───────── */
+    const starLi = [...document.querySelectorAll('#scoreList li[data-id]')].find(li => /小星星/.test(li.textContent));
+    starLi.click();
+    await sleep(200);
+    const titleBeforeHot = $('#npTitle').textContent;
+    ok('选中小星星准备热更新（' + titleBeforeHot + '）', /小星星/.test(titleBeforeHot), titleBeforeHot);
+
+    const hotDt = new DataTransfer();
+    const hotSongObj = JSON.parse(texts[0]);
+    hotSongObj.name = '小星星（热更新版）';
+    if (Array.isArray(hotSongObj.notes)) {
+      hotSongObj.notes.push({ key: 'Z', pitch: 48, start: 50, end: 350 });
+    }
+    const hotFileName = decodeURIComponent(urls[0].split('/').pop());
+    hotDt.items.add(new File([JSON.stringify(hotSongObj)], hotFileName, { type: 'application/json' }));
+    $('#fileInput').files = hotDt.files;
+    $('#fileInput').dispatchEvent(new Event('change'));
+    await sleep(350);
+
+    const lisAfter = document.querySelectorAll('#scoreList li[data-id]');
+    ok('热更新后歌曲数量未增加（覆盖更新）', lisAfter.length === 2, '当前数量 ' + lisAfter.length);
+    const updatedTitle = $('#npTitle').textContent;
+    ok('正在选中的曲目原地更新曲名（' + updatedTitle + '）', /热更新版/.test(updatedTitle), updatedTitle);
+
     return out.join('\\n');
   } catch (e) {
     out.push('FATAL  ' + (e && e.stack ? e.stack : e));
