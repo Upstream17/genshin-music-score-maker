@@ -900,15 +900,26 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
       </section>
 
       <section id="editBar" class="editbar" hidden>
-        <span id="editInfo" class="edit-info">未选中音符 · 点击卷帘里的音符选中，点击空白处添加</span>
+        <span id="editInfo" class="edit-info">未选中音符 · 拖拽音符移动/改高，拖拽右侧改时长，滚轮平移</span>
         <div class="edit-ops">
-          <button id="btnPitchDown" class="btn btn-sm" title="降一个音级">◂ 音高</button>
-          <button id="btnPitchUp" class="btn btn-sm" title="升一个音级">音高 ▸</button>
-          <button id="btnDurDown" class="btn btn-sm" title="缩短">◂ 时长</button>
-          <button id="btnDurUp" class="btn btn-sm" title="加长">时长 ▸</button>
+          <button id="btnTimeLeft" class="btn btn-sm" title="向左平移起始时间（←）">◂ 前移</button>
+          <button id="btnTimeRight" class="btn btn-sm" title="向右平移起始时间（→）">后移 ▸</button>
+          <button id="btnPitchDown" class="btn btn-sm" title="降一个音级（↓）">◂ 音高</button>
+          <button id="btnPitchUp" class="btn btn-sm" title="升一个音级（↑）">音高 ▸</button>
+          <button id="btnDurDown" class="btn btn-sm" title="缩短时值（Shift+←）">◂ 时长</button>
+          <button id="btnDurUp" class="btn btn-sm" title="加长时值（Shift+→）">时长 ▸</button>
+          <span class="mini-label" style="margin-left:4px">吸附</span>
+          <select id="editSnap" class="select" style="max-width:85px;padding:3px 6px;font-size:11px" title="网格吸附精度">
+            <option value="20">20ms</option>
+            <option value="50" selected>50ms</option>
+            <option value="100">100ms</option>
+            <option value="quarter">1/4 拍</option>
+            <option value="eighth">1/8 拍</option>
+          </select>
           <button id="btnDel" class="btn btn-sm" title="删除（Delete）">删除</button>
+          <button id="btnDeselect" class="btn btn-sm" title="取消选中（Esc）">取消选中</button>
           <span class="vrule"></span>
-          <button id="btnEditUndo" class="btn btn-sm">撤销</button>
+          <button id="btnEditUndo" class="btn btn-sm" title="撤销（Ctrl+Z）">撤销</button>
           <button id="btnEditReset" class="btn btn-sm">还原</button>
           <button id="btnEditExport" class="btn btn-sm btn-ink">导出 JSON</button>
         </div>

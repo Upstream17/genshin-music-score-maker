@@ -352,7 +352,7 @@
     dry.connect(busTarget);
 
     var wet = ctx.createGain();
-    wet.gain.setValueAtTime(0.32, ctx.currentTime);
+    wet.gain.setValueAtTime(0.12, ctx.currentTime);
 
     // 轻量混响：优先 ConvolverNode + 程序生成 IR；不可用则退化为 feedback-delay
     var conv = null;
@@ -474,6 +474,14 @@
     if (!inst) return false;
     if (inst.id === 'sample' && !this.hasSamples) return false;
     this._instrumentId = inst.id;
+    if (this.wet && this._ctx) {
+      var wetVal = inst.kind === 'sample' ? 0.10 : 0.28;
+      try {
+        this.wet.gain.setTargetAtTime(wetVal, this._ctx.currentTime, 0.05);
+      } catch (_) {
+        try { this.wet.gain.value = wetVal; } catch (_) {}
+      }
+    }
     return true;
   };
 
@@ -632,11 +640,16 @@
     try { src.playbackRate.setValueAtTime(rate, when); } catch (e) { src.playbackRate.value = rate; }
 
     var g = ctx.createGain();
-    // 两端各留 2ms / 60ms 淡入淡出，避免采样首尾不干净造成 click
+    // 拨弦衰减包络：起音 2ms 迅速冲顶，之后做模拟拨弦的自然指数衰减
     var fadeOut = Math.min(0.06, tail * 0.5);
     g.gain.setValueAtTime(0, when);
     g.gain.linearRampToValueAtTime(peak, when + 0.002);
-    g.gain.setValueAtTime(peak, Math.max(when + 0.003, end - fadeOut));
+    var decayTarget = Math.max(0.0002, peak * 0.35);
+    var decayDuration = Math.min(tail * 0.6, 0.4);
+    if (decayDuration > 0.05) {
+      g.gain.setTargetAtTime(decayTarget, when + 0.003, decayDuration * 0.45);
+    }
+    g.gain.setValueAtTime(Math.max(0.0002, decayTarget * 0.7), Math.max(when + 0.004, end - fadeOut));
     g.gain.linearRampToValueAtTime(0, end);
 
     src.connect(g);
