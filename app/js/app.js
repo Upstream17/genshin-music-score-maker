@@ -52,9 +52,10 @@
       'search', 'listCount', 'btnClearList', 'scoreList',
       'npTitle', 'npSub', 'npNoteName', 'npNoteSol',
       'btnPlay', 'btnPlayLabel', 'btnStop', 'btnPrev', 'btnNext', 'trackIndex',
+      'btnStepBack', 'btnStepFwd',
       'speed', 'speedVal', 'loop', 'autoplay', 'btnPlayMode', 'playModeLabel',
       'tNow', 'tTotal', 'seek', 'seekWrap', 'seekFill', 'seekThumb',
-      'keyboard', 'playKeys', 'playHint',
+      'keyboard', 'playKeys', 'playHint', 'btnRecord', 'btnRecordLabel',
       'modePlay', 'modeEdit',
       'editBar', 'editInfo', 'btnTimeLeft', 'btnTimeRight', 'btnPitchDown', 'btnPitchUp',
       'btnDurDown', 'btnDurUp', 'btnDel', 'btnDeselect', 'editSnap',
@@ -103,6 +104,8 @@
     heldKeys: {},           /* PC 键盘按住中的键（只影响视觉） */
     audition: {},
     playKeys: true,
+    recording: false,
+    recActiveNotes: {},
 
     edit: {
       on: true,
@@ -704,8 +707,10 @@
     updateNpTitleEditable(false);
     el.npSub.textContent = '从左侧新建或导入曲谱，也可以将文件夹拖进来';
     el.btnPlay.disabled = true; el.btnStop.disabled = true; el.seek.disabled = true;
+    if (el.btnStepBack) el.btnStepBack.disabled = true;
+    if (el.btnStepFwd) el.btnStepFwd.disabled = true;
     el.tTotal.textContent = '0:00.0';
-    el.diag.textContent = '—';
+    if (el.diag) el.diag.textContent = '—';
     renderList(); updateTrackNav(); clearKeys(); drawRoll(0); updateEditBar();
   }
 
@@ -885,6 +890,8 @@
       el.btnPlay.disabled = true;
       el.btnStop.disabled = true;
       el.seek.disabled = true;
+      if (el.btnStepBack) el.btnStepBack.disabled = true;
+      if (el.btnStepFwd) el.btnStepFwd.disabled = true;
       el.tTotal.textContent = '0:00.0';
       renderList(); renderDiag(entry, null); updateTrackNav();
       clearKeys(); drawRoll(0); updateEditBar();
@@ -1011,14 +1018,110 @@
   function maxScrollMs() { return Math.max(duration() + state.viewSec * 500, state.viewSec * 2000); }
 
   function currentScoreMs() {
-    if (state.playing && state.engine) return clamp(scoreMsAt(engNow()), 0, duration() + 5000);
+    if (state.playing && state.engine) {
+      var raw = scoreMsAt(engNow());
+      return state.recording ? Math.max(0, raw) : clamp(raw, 0, duration() + 5000);
+    }
     return state.posMs;
+  }
+
+  function clearLiveRecordedFlags() {
+    if (!state.current || !state.current.notes) return;
+    for (var i = 0; i < state.current.notes.length; i++) {
+      if (state.current.notes[i]._liveRecorded) delete state.current.notes[i]._liveRecorded;
+    }
+  }
+
+  function finalizeAllRecNotes() {
+    var any = false;
+    var nowMs = currentScoreMs();
+    var snap = getSnapMs();
+    for (var k in state.recActiveNotes) {
+      var n = state.recActiveNotes[k];
+      if (n && state.playing) {
+        var snappedEnd = Math.round(nowMs / snap) * snap;
+        n.end = Math.max(n.start + MIN_NOTE_MS, snappedEnd);
+        any = true;
+      }
+      delete state.recActiveNotes[k];
+    }
+    if (any) {
+      recomputeDerived();
+      updateEditBar();
+      renderDiag(state.currentEntry, state.current);
+    }
+  }
+
+  function toggleRecording(forceVal) {
+    var next = (typeof forceVal === 'boolean') ? forceVal : !state.recording;
+    if (next && !state.current) {
+      createNewScore({ silent: true });
+    }
+    if (!next) {
+      finalizeAllRecNotes();
+      clearLiveRecordedFlags();
+    }
+    state.recording = next;
+    if (el.btnRecord) el.btnRecord.classList.toggle('is-rec', next);
+    if (el.btnRecordLabel) el.btnRecordLabel.textContent = next ? '录制中' : '录制';
+    updateEditBar();
+    if (next) {
+      toast('已开启录制：播放时按琴键实时录入，暂停时按键在当前时间戳落音', 'ok');
+    } else {
+      toast('已退出录制模式', 'ok', 1800);
+    }
+  }
+
+  function recordNoteStart(k) {
+    if (!state.recording) return;
+    if (!state.current) createNewScore({ silent: true });
+    pushUndo();
+    var rawMs = currentScoreMs();
+    var snap = getSnapMs();
+    var start = Math.max(0, Math.round(rawMs / snap) * snap);
+    var dur = state.edit.lastDur || DEFAULT_DUR;
+    var note = {
+      key: k,
+      pitch: keyToPitch(k),
+      start: start,
+      end: start + dur,
+      velocity: 1,
+      _liveRecorded: true
+    };
+    state.current.notes.push(note);
+    state.edit.selNote = note;
+    state.edit.dirty = true;
+    state.recActiveNotes[k] = note;
+    recomputeDerived();
+    if (state.playing) {
+      state.cursor = lowerBoundEnd(state.current.notes, rawMs);
+    }
+    updateEditBar();
+    renderDiag(state.currentEntry, state.current);
+    drawRoll(currentScoreMs());
+  }
+
+  function recordNoteEnd(k) {
+    var note = state.recActiveNotes[k];
+    if (!note) return;
+    delete state.recActiveNotes[k];
+    if (state.playing) {
+      var snap = getSnapMs();
+      var endMs = Math.round(currentScoreMs() / snap) * snap;
+      note.end = Math.max(note.start + MIN_NOTE_MS, endMs);
+      state.edit.lastDur = note.end - note.start;
+      recomputeDerived();
+      updateEditBar();
+      renderDiag(state.currentEntry, state.current);
+      drawRoll(currentScoreMs());
+    }
   }
 
   function startPlayback(fromMs) {
     var sc = state.current;
     if (!sc) return;
-    fromMs = clamp(fromMs, 0, duration());
+    clearLiveRecordedFlags();
+    fromMs = state.recording ? Math.max(0, fromMs) : clamp(fromMs, 0, duration());
     state.baseCtxTime = engNow();
     state.baseScoreMs = fromMs;
     state.posMs = fromMs;
@@ -1040,16 +1143,18 @@
       var n = notes[state.cursor];
       var w = ctxTimeAt(n.start);
       if (w > limit) break;
-      var startMs = Math.max(n.start, nowScore);
-      if (n.end > startMs) {
-        var when = Math.max(w, now + 0.004);
-        var dur = Math.max(MIN_NOTE_MS, (n.end - startMs) / 1000 / state.speed);
-        noteOn(n.pitch, when, dur, n.velocity);
+      if (!n._liveRecorded) {
+        var startMs = Math.max(n.start, nowScore);
+        if (n.end > startMs) {
+          var when = Math.max(w, now + 0.004);
+          var dur = Math.max(MIN_NOTE_MS, (n.end - startMs) / 1000 / state.speed);
+          noteOn(n.pitch, when, dur, n.velocity);
+        }
       }
       state.cursor++;
     }
 
-    if (nowScore >= duration() + END_PAD_MS) {
+    if (!state.recording && nowScore >= duration() + END_PAD_MS) {
       if (state.playMode === 'single' || state.loop) {
         startPlayback(0);
       } else if (state.playMode === 'order') {
@@ -1071,13 +1176,18 @@
 
   function pausePlayback() {
     if (!state.playing) return;
-    state.posMs = clamp(scoreMsAt(engNow()), 0, duration());
+    finalizeAllRecNotes();
+    clearLiveRecordedFlags();
+    var raw = scoreMsAt(engNow());
+    state.posMs = state.recording ? Math.max(0, raw) : clamp(raw, 0, duration());
     state.playing = false;
     if (state.engine) { try { state.engine.stopAll(); } catch (_) { } }
     updateTransport();
   }
 
   function stopPlayback() {
+    finalizeAllRecNotes();
+    clearLiveRecordedFlags();
     state.playing = false;
     if (state.engine) { try { state.engine.stopAll(); } catch (_) { } }
     if (state.schedTimer) { clearInterval(state.schedTimer); state.schedTimer = null; }
@@ -1090,7 +1200,7 @@
 
   function seekTo(ms, allowBeyond) {
     if (!state.current) return;
-    var limitMs = allowBeyond ? maxScrollMs() : Math.max(duration(), state.current.isNew ? maxScrollMs() : 0);
+    var limitMs = allowBeyond ? maxScrollMs() : Math.max(duration(), (state.current.isNew || state.recording) ? maxScrollMs() : 0);
     ms = clamp(ms, 0, limitMs);
     state.posMs = ms;
     if (state.playing) startPlayback(ms);
@@ -1101,12 +1211,18 @@
     }
   }
 
+  function stepTimestamp(deltaMs) {
+    if (!state.current) return;
+    seekTo(clamp(currentScoreMs() + deltaMs, 0, maxScrollMs()), true);
+    updateEditBar();
+  }
+
   function playCurrent() {
     if (!state.current) return;
     if (!ensureEngine()) return;
     safeResume().then(function () {
       var from = state.posMs;
-      if (from >= duration() - 10) from = 0;
+      if (!state.recording && from >= duration() - 10) from = 0;
       startPlayback(from);
     });
   }
@@ -1117,6 +1233,8 @@
     if (el.btnPlayLabel) el.btnPlayLabel.textContent = state.playing ? '暂停' : '播放';
     el.btnPlay.disabled = !state.current;
     el.btnStop.disabled = !state.current;
+    if (el.btnStepBack) el.btnStepBack.disabled = !state.current;
+    if (el.btnStepFwd) el.btnStepFwd.disabled = !state.current;
   }
 
   /* ═══════════════════ 播放模式（列表循环 / 单曲循环 / 顺序播放） ═══════════════════ */
@@ -1250,6 +1368,7 @@
     safeResume().then(function () {
       noteOn(p, engNow() + 0.005, 0.45, 0.95);
     });
+    if (state.recording) recordNoteStart(k);
   }
 
   function releasePointerKey(k) {
@@ -1259,6 +1378,7 @@
     if (state.engine && typeof state.engine.noteOff === 'function') {
       try { state.engine.noteOff(p, engNow() + 0.005); } catch (_) {}
     }
+    if (state.recording) recordNoteEnd(k);
   }
 
   function auditionKey(k) {
@@ -1863,6 +1983,8 @@
 
   function getSnapMs() {
     var s = el.editSnap ? el.editSnap.value : '50';
+    if (s === '1') return 1;
+    if (s === '10') return 10;
     if (s === '20') return 20;
     if (s === '50') return 50;
     if (s === '100') return 100;
@@ -2029,6 +2151,26 @@
     var t = currentScoreMs();
     if (state.playing) state.posMs = t;
 
+    if (state.playing && state.recording) {
+      var stretched = false;
+      for (var rk in state.recActiveNotes) {
+        if (Object.prototype.hasOwnProperty.call(state.recActiveNotes, rk)) {
+          var rn = state.recActiveNotes[rk];
+          if (rn && rn.note) {
+            var nextEnd = Math.max(rn.note.start + MIN_NOTE_MS, Math.round(t));
+            if (nextEnd !== rn.note.end) {
+              rn.note.end = nextEnd;
+              stretched = true;
+            }
+          }
+        }
+      }
+      if (stretched) {
+        recomputeDerived();
+        updateEditBar();
+      }
+    }
+
     var act = shouldShowKeys() ? activeAt(t) : [];
     var keys = {}, top = null;
     for (var i = 0; i < act.length; i++) {
@@ -2051,10 +2193,11 @@
     }
 
     if (el.liveText) {
-      var want = state.playing ? '播放中'
-        : (state.current ? (state.posMs > 0 ? '已暂停' : '就绪') : '空闲');
+      var want = state.recording
+        ? (state.playing ? '录制中' : '待命录制')
+        : (state.playing ? '播放中' : (state.current ? (state.posMs > 0 ? '已暂停' : '就绪') : '空闲'));
       if (el.liveText.textContent !== want) el.liveText.textContent = want;
-      el.liveText.classList.toggle('is-on', state.playing);
+      el.liveText.classList.toggle('is-on', state.playing || state.recording);
     }
 
     var d = duration();
@@ -2265,6 +2408,9 @@
     el.btnStop.addEventListener('click', function () { stopPlayback(); });
     el.btnPrev.addEventListener('click', function () { jumpTrack(-1, state.playing); });
     el.btnNext.addEventListener('click', function () { jumpTrack(1, state.playing); });
+    if (el.btnStepBack) el.btnStepBack.addEventListener('click', function () { stepTimestamp(-getSnapMs()); });
+    if (el.btnStepFwd) el.btnStepFwd.addEventListener('click', function () { stepTimestamp(getSnapMs()); });
+    if (el.btnRecord) el.btnRecord.addEventListener('click', function () { toggleRecording(); });
 
     if (el.modePlay) el.modePlay.addEventListener('click', function () { setMode(false); });
     if (el.modeEdit) el.modeEdit.addEventListener('click', function () { setMode(true); });
@@ -2414,6 +2560,14 @@
     if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
       e.preventDefault(); undoEdit(); return;
     }
+    /* Alt + 左右方向键：10ms 极细微调（选中音符时微调音符，未选中时微调时间戳） */
+    if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      var fineDelta = e.key === 'ArrowLeft' ? -10 : 10;
+      if (state.edit.on && state.edit.selNote) editTime(fineDelta);
+      else stepTimestamp(fineDelta);
+      return;
+    }
     if (e.ctrlKey || e.altKey || e.metaKey) return;
 
     /* 编辑模式：Delete 删音符 */
@@ -2421,7 +2575,7 @@
       e.preventDefault(); editDelete(); return;
     }
 
-    if (e.code === 'Space') { e.preventDefault(); el.btnPlay.click(); return; }
+    if (e.code === 'Space' || e.code === 'Numpad5') { e.preventDefault(); el.btnPlay.click(); return; }
     if (e.key === 'Escape') {
       if (state.edit.on && state.edit.selNote) {
         e.preventDefault();
@@ -2434,36 +2588,58 @@
       return;
     }
 
-    /* 编辑模式：选中音符时，上下左右方向键专用于微调音符，不切歌！ */
+    /* 小键盘 & [ ] 时间戳步进微调 */
+    var snapStep = getSnapMs();
+    if (e.code === 'Numpad4' || e.key === '[' || e.key === '{') {
+      e.preventDefault();
+      stepTimestamp(-(e.shiftKey ? 1000 : snapStep));
+      return;
+    }
+    if (e.code === 'Numpad6' || e.key === ']' || e.key === '}') {
+      e.preventDefault();
+      stepTimestamp(e.shiftKey ? 1000 : snapStep);
+      return;
+    }
+    if (e.code === 'Numpad7') { e.preventDefault(); stepTimestamp(-1000); return; }
+    if (e.code === 'Numpad9') { e.preventDefault(); stepTimestamp(1000); return; }
+    if (e.code === 'Numpad0' || e.key === 'Home') {
+      e.preventDefault();
+      if (state.current) { seekTo(0, true); updateEditBar(); }
+      return;
+    }
+
+    /* 编辑模式：选中音符时，上下左右方向键及小键盘 8/2/+/- 专用于微调音符，不切歌！ */
     if (state.edit.on && state.edit.selNote) {
-      if (e.key === 'ArrowUp') { e.preventDefault(); editPitch(1); return; }
-      if (e.key === 'ArrowDown') { e.preventDefault(); editPitch(-1); return; }
-      var snap = getSnapMs();
+      if (e.key === 'ArrowUp' || e.code === 'Numpad8') { e.preventDefault(); editPitch(1); return; }
+      if (e.key === 'ArrowDown' || e.code === 'Numpad2') { e.preventDefault(); editPitch(-1); return; }
+      if (e.code === 'NumpadAdd') { e.preventDefault(); editDurDelta(snapStep); return; }
+      if (e.code === 'NumpadSubtract') { e.preventDefault(); editDurDelta(-snapStep); return; }
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
-        if (e.shiftKey) editDurDelta(-snap);
-        else editTime(-snap);
+        if (e.shiftKey) editDurDelta(-snapStep);
+        else editTime(-snapStep);
         return;
       }
       if (e.key === 'ArrowRight') {
         e.preventDefault();
-        if (e.shiftKey) editDurDelta(snap);
-        else editTime(snap);
+        if (e.shiftKey) editDurDelta(snapStep);
+        else editTime(snapStep);
         return;
       }
     }
 
-    if (e.key === 'ArrowLeft') { e.preventDefault(); seekTo(currentScoreMs() - 5000); return; }
-    if (e.key === 'ArrowRight') { e.preventDefault(); seekTo(currentScoreMs() + 5000); return; }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); stepTimestamp(-(e.shiftKey ? 5000 : snapStep)); return; }
+    if (e.key === 'ArrowRight') { e.preventDefault(); stepTimestamp(e.shiftKey ? 5000 : snapStep); return; }
     if (e.key === 'ArrowUp') { e.preventDefault(); jumpTrack(-1, state.playing); return; }
     if (e.key === 'ArrowDown') { e.preventDefault(); jumpTrack(1, state.playing); return; }
 
-    /* 键盘弹奏：把字母键映射到 21 键 */
-    if (state.playKeys && e.key && e.key.length === 1) {
+    /* 键盘弹奏 / 录制：把字母键映射到 21 键 */
+    if ((state.playKeys || state.recording) && e.key && e.key.length === 1) {
       var k = e.key.toUpperCase();
       if (FALLBACK_KEY_TO_PITCH[k] != null && !state.heldKeys[k]) {
         e.preventDefault();
         state.heldKeys[k] = true;
+        if (state.recording) recordNoteStart(k);
         if (!ensureEngine()) return;
         safeResume().then(function () { noteOn(keyToPitch(k), engNow() + 0.005, 0.45, 0.92); });
       }
@@ -2475,6 +2651,7 @@
     var k = e.key.toUpperCase();
     if (state.heldKeys[k]) {
       delete state.heldKeys[k];
+      if (state.recording) recordNoteEnd(k);
       if (state.engine && typeof state.engine.noteOff === 'function') {
         try { state.engine.noteOff(keyToPitch(k), engNow() + 0.005); } catch (_) {}
       }

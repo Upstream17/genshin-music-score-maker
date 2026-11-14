@@ -711,6 +711,23 @@ html, body {
 .btn-group .btn-xs:last-child { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -1px; }
 .btn-xs { padding: 2px 7px; font-size: 11px; height: 23px; line-height: 1; border-radius: var(--r-sm); }
 .btn-group .btn-xs { min-width: 22px; padding: 2px 5px; font-family: var(--mono); }
+.btn-rec { gap: 5px; flex: 0 0 auto; }
+.rec-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink-4);
+  transition: background .14s ease-out;
+}
+.btn-rec.is-rec {
+  color: var(--danger);
+  border-color: #e0c4bd;
+  background: #fdf6f4;
+}
+.btn-rec.is-rec .rec-dot {
+  background: var(--danger);
+}
 .select-xs {
   max-width: 72px;
   height: 23px;
@@ -909,7 +926,6 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
           <input type="file" id="sampleInput" webkitdirectory hidden>
           <button id="btnLoadSamples" class="btn btn-block btn-sm">加载自定义采样文件夹</button>
           <div class="sample-stat" id="sampleStat">正在使用风物之诗琴真实采样</div>
-          <div class="diag" id="diag">—</div>
         </div>
       </details>
     </aside>
@@ -955,6 +971,11 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
           <span class="t-now" id="tNow">0:00.0</span>
           <span class="t-sep">/</span>
           <span class="t-total" id="tTotal">0:00.0</span>
+        </div>
+
+        <div class="btn-group" title="按当前吸附步长微调播放头时间戳（[ / ] 或小键盘 4 / 6）">
+          <button id="btnStepBack" class="btn btn-xs" type="button" title="时间戳前移一步（[ 或小键盘 4）" disabled>◂</button>
+          <button id="btnStepFwd" class="btn btn-xs" type="button" title="时间戳后移一步（] 或小键盘 6）" disabled>▸</button>
         </div>
 
         <span class="vrule"></span>
@@ -1004,21 +1025,24 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
               <input type="checkbox" id="playKeys" checked>
               <i></i><span>键盘弹奏</span>
             </label>
+            <button id="btnRecord" class="btn btn-xs btn-rec" type="button" title="开启键盘录制：边播放边弹奏实时录入旋律，或暂停时在当前时间戳定点录入">
+              <i class="rec-dot"></i><span id="btnRecordLabel">录制</span>
+            </button>
             <span class="vrule"></span>
             <span id="editInfo" class="edit-info">未选择曲目</span>
           </div>
 
           <div class="roll-head-right">
             <div class="edit-ops">
-              <div class="btn-group" title="平移选中音符起点（← / →）">
+              <div class="btn-group" title="平移选中音符起点（← / →，按住 Alt 按 10ms 微调）">
                 <button id="btnTimeLeft" class="btn btn-xs" title="向左平移起始时间（←）" disabled>◂</button>
                 <button id="btnTimeRight" class="btn btn-xs" title="向右平移起始时间（→）" disabled>▸</button>
               </div>
-              <div class="btn-group" title="调整选中音符音高（↓ / ↑）">
+              <div class="btn-group" title="调整选中音符音高（↓ / ↑ 或小键盘 2 / 8）">
                 <button id="btnPitchDown" class="btn btn-xs" title="降一个音级（↓）" disabled>↓</button>
                 <button id="btnPitchUp" class="btn btn-xs" title="升一个音级（↑）" disabled>↑</button>
               </div>
-              <div class="btn-group" title="调整选中音符时值（Shift+← / Shift+→）">
+              <div class="btn-group" title="调整选中音符时值（Shift+← / Shift+→ 或小键盘 - / +）">
                 <button id="btnDurDown" class="btn btn-xs" title="缩短时值（Shift+←）" disabled>−</button>
                 <button id="btnDurUp" class="btn btn-xs" title="加长时值（Shift+→）" disabled>+</button>
               </div>
@@ -1026,7 +1050,9 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
               <button id="btnDeselect" class="btn btn-xs" title="取消选中（Esc）" hidden>取消</button>
               <span class="vrule"></span>
               <span class="mini-label">吸附</span>
-              <select id="editSnap" class="select select-xs" title="网格吸附精度">
+              <select id="editSnap" class="select select-xs" title="网格吸附与时间戳步进精度">
+                <option value="1">自由(1ms)</option>
+                <option value="10">10ms</option>
                 <option value="20">20ms</option>
                 <option value="50" selected>50ms</option>
                 <option value="100">100ms</option>

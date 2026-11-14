@@ -349,6 +349,53 @@ function pageScript(scoreUrls) {
     ok('删除当前选中曲目后自动无缝切到下一首（' + $('#npTitle').textContent + '）',
       $('#npTitle').textContent !== '风神之诗练习' && $('#npTitle').textContent !== '未选择曲目');
 
+    /* ───────── 11. 冗余空白清理 + 时间戳微调（按钮与小键盘） + 边播边录 ───────── */
+    ok('音色与设置底部冗余 #diag 空白框已移除', !document.querySelector('#diag'));
+
+    $('#btnNewScore').click();
+    await sleep(150);
+    ok('新建空白曲谱供录制与微调测试（0 音）', notesCount() === 0);
+
+    /* 设置吸附步进为 100ms 并测试时间戳微调按钮与小键盘 Numpad6/Numpad4 */
+    $('#editSnap').value = '100';
+    $('#editSnap').dispatchEvent(new Event('change'));
+    $('#btnStepFwd').click();
+    await sleep(80);
+    ok('时间戳前进按钮微调 +100ms（' + $('#tNow').textContent + '）', $('#tNow').textContent === '0:00.1', $('#tNow').textContent);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '6', code: 'Numpad6', bubbles: true }));
+    await sleep(80);
+    ok('小键盘 Numpad6 微调当前时间戳 +100ms（' + $('#tNow').textContent + '）', $('#tNow').textContent === '0:00.2', $('#tNow').textContent);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '4', code: 'Numpad4', bubbles: true }));
+    await sleep(80);
+    ok('小键盘 Numpad4 微调当前时间戳 -100ms（' + $('#tNow').textContent + '）', $('#tNow').textContent === '0:00.1', $('#tNow').textContent);
+
+    /* 开启录制：先在暂停态定点录入 1 个音，再在播放态实时边播边录 1 个音 */
+    $('#btnRecord').click();
+    await sleep(80);
+    ok('开启录制模式（按钮高亮且文案为「录制中」）', $('#btnRecord').classList.contains('is-rec') && /录制中/.test($('#btnRecordLabel').textContent));
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'q', code: 'KeyQ', bubbles: true }));
+    await sleep(60);
+    document.dispatchEvent(new KeyboardEvent('keyup', { key: 'q', code: 'KeyQ', bubbles: true }));
+    await sleep(80);
+    ok('暂停态按 Q 键定点录入音符（0 -> 1 音）', notesCount() === 1, '当前 ' + notesCount());
+
+    $('#btnPlay').click();
+    await sleep(120);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', code: 'KeyW', bubbles: true }));
+    await sleep(160);
+    document.dispatchEvent(new KeyboardEvent('keyup', { key: 'w', code: 'KeyW', bubbles: true }));
+    await sleep(80);
+    $('#btnStop').click();
+    await sleep(100);
+    ok('边播放边按 W 键实时录制旋律（1 -> 2 音）', notesCount() === 2, '当前 ' + notesCount());
+
+    $('#btnRecord').click();
+    await sleep(60);
+    ok('关闭录制模式恢复常态', !$('#btnRecord').classList.contains('is-rec'));
+
     return out.join('\\n');
   } catch (e) {
     out.push('FATAL  ' + (e && e.stack ? e.stack : e));
