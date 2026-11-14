@@ -291,6 +291,41 @@ function pageScript(scoreUrls) {
     const updatedTitle = $('#npTitle').textContent;
     ok('正在选中的曲目原地更新曲名（' + updatedTitle + '）', /热更新版/.test(updatedTitle), updatedTitle);
 
+    /* ───────── 9. 新建曲谱与编曲工作流（从零建谱 / 改名 / 跨曲目保留编辑） ───────── */
+    $('#btnNewScore').click();
+    await sleep(200);
+    const lisAfterNew = document.querySelectorAll('#scoreList li[data-id]');
+    ok('点击「＋ 新建曲谱」后歌单增加到 3 首', lisAfterNew.length === 3, '当前数量 ' + lisAfterNew.length);
+    ok('新曲谱自动选中且初始 0 音', $('#npTitle').textContent === '未命名曲谱 1' && notesCount() === 0,
+      $('#npTitle').textContent + ' / ' + notesCount());
+    ok('标题处于可内联编辑状态', $('#npTitle').getAttribute('contenteditable') === 'true');
+
+    /* 在新曲谱网格上点击落音 */
+    const rNew = cv.getBoundingClientRect();
+    const cxNew = Math.round(rNew.left + rNew.width * 0.62);
+    const cyNew = Math.round(rNew.top + rNew.height * 0.72);
+    cv.dispatchEvent(new MouseEvent('click', { clientX: cxNew, clientY: cyNew, bubbles: true }));
+    await sleep(150);
+    ok('新曲谱点击网格落音成功（0 -> 1 音）', notesCount() === 1,
+      notesCount() + ' / rect=' + Math.round(rNew.top) + 'x' + Math.round(rNew.height) + ' / info=' + $('#editInfo').textContent);
+    ok('副标题实时更新音符统计（' + $('#npSub').textContent + '）', /原创.*1\\s*音/.test($('#npSub').textContent), $('#npSub').textContent);
+
+    /* 内联改名且不触发琴键弹奏 */
+    $('#npTitle').focus();
+    $('#npTitle').textContent = '晨曦酒庄练习曲';
+    $('#npTitle').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await sleep(120);
+    const activeLiText = (document.querySelector('#scoreList li.sel .nm') || {}).textContent || '';
+    ok('内联修改曲名同步到侧栏歌单（' + activeLiText + '）', activeLiText === '晨曦酒庄练习曲', activeLiText);
+
+    /* 切换到其他曲目再切回，新编的音符不丢失 */
+    document.querySelectorAll('#scoreList li[data-id]')[1].click();
+    await sleep(150);
+    document.querySelectorAll('#scoreList li[data-id]')[0].click();
+    await sleep(150);
+    ok('切歌再切回后新编曲谱音符保留（1 音）', notesCount() === 1 && $('#npTitle').textContent === '晨曦酒庄练习曲',
+      $('#npTitle').textContent + ' / ' + notesCount());
+
     return out.join('\\n');
   } catch (e) {
     out.push('FATAL  ' + (e && e.stack ? e.stack : e));

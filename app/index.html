@@ -150,6 +150,7 @@ html, body {
 }
 
 .import { display: flex; flex-direction: column; gap: 7px; padding: 18px 18px 0; }
+.import-row { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 
 .dropzone {
   margin: 10px 18px 0;
@@ -375,6 +376,19 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  border-bottom: 1px dashed transparent;
+  transition: border-color .15s, background .15s;
+}
+.song-title.is-editable { cursor: text; }
+.song-title.is-editable:hover { border-bottom-color: var(--rule-2); }
+.song-title.is-editable:focus {
+  outline: none;
+  background: var(--surface);
+  border-bottom: 1px solid var(--accent);
+  padding: 0 6px;
+  margin: 0 -6px;
+  border-radius: 3px 3px 0 0;
+  text-overflow: clip;
 }
 .song-sub {
   margin-top: 6px;
@@ -786,8 +800,11 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
     <aside class="sidebar">
 
       <div class="import">
-        <button id="btnPickFiles" class="btn btn-ink btn-block">导入曲谱</button>
-        <button id="btnPickDir" class="btn btn-block">整个文件夹</button>
+        <button id="btnNewScore" class="btn btn-ink btn-block">＋ 新建曲谱</button>
+        <div class="import-row">
+          <button id="btnPickFiles" class="btn btn-block">导入曲谱</button>
+          <button id="btnPickDir" class="btn btn-block">整个文件夹</button>
+        </div>
       </div>
 
       <div class="dropzone" id="dropzone">

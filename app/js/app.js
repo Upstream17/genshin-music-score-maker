@@ -47,7 +47,7 @@
   var el = {};
   function cacheDom() {
     [
-      'btnPickFiles', 'btnPickDir', 'dropzone', 'fileInput', 'dirInput',
+      'btnNewScore', 'btnPickFiles', 'btnPickDir', 'dropzone', 'fileInput', 'dirInput',
       'importProgress', 'importBar', 'importText',
       'search', 'listCount', 'btnClearList', 'scoreList',
       'npTitle', 'npSub', 'npNoteName', 'npNoteSol',
@@ -667,7 +667,7 @@
       var e = list[i];
       var cls = 'li' + (e.id === state.selectedId ? ' sel' : '') + (e.ok ? '' : ' bad');
       var badge = e.ok
-        ? '<span class="badge">' + esc(e.type) + '</span>'
+        ? '<span class="badge">' + esc(e.isNew ? 'new' : e.type) + '</span>'
         : '<span class="badge err">!</span>';
       var sub = e.ok
         ? [fmtDur(e.durationMs), e.noteCount + ' 音', e.author || ''].filter(Boolean).join(' · ')
@@ -680,17 +680,80 @@
       );
     }
     el.scoreList.innerHTML = html.join('') ||
-      '<li class="empty-state">还没有曲谱<br>导入 .json，或把整个文件夹拖进来</li>';
+      '<li class="empty-state">还没有曲谱<br>点击上方「＋ 新建曲谱」或导入 .json</li>';
   }
 
-  /* ═══════════════════ 选中曲目 ═══════════════════ */
+  /* ═══════════════════ 新建与选中曲目 ═══════════════════ */
 
-  function selectEntry(id) {
+  var newScoreSeq = 0;
+
+  function copyNote(n) {
+    return { key: n.key, pitch: n.pitch, start: n.start, end: n.end, velocity: n.velocity == null ? 1 : n.velocity };
+  }
+
+  function createNewScore(opts) {
+    opts = opts || {};
+    var idx = ++newScoreSeq;
+    var name = opts.name || ('未命名曲谱 ' + idx);
+    var id = state.nextId++;
+    var entry = {
+      id: id,
+      path: name + '.json',
+      fileName: name + '.json',
+      name: name,
+      author: '原创',
+      type: 'midi',
+      bpm: 120,
+      ticks: 1000,
+      ok: true,
+      isNew: true,
+      error: '',
+      noteCount: 0,
+      durationMs: 0,
+      instrument: '风物之诗琴',
+      text: '',
+      workingNotes: []
+    };
+    state.entries.unshift(entry);
+    selectEntry(id);
+    scrollListTo(id);
+    updateTrackNav();
+    if (!opts.silent) {
+      toast('已新建「' + name + '」· 点击卷帘加音，点击标题可修改曲名', 'ok');
+    }
+    return entry;
+  }
+
+  function updateNpTitleEditable(editable) {
+    if (!el.npTitle) return;
+    if (editable) {
+      el.npTitle.classList.add('is-editable');
+      el.npTitle.setAttribute('contenteditable', 'true');
+      el.npTitle.setAttribute('spellcheck', 'false');
+      el.npTitle.title = '点击直接修改曲谱名称（回车确认）';
+    } else {
+      el.npTitle.classList.remove('is-editable');
+      el.npTitle.removeAttribute('contenteditable');
+      el.npTitle.removeAttribute('title');
+    }
+  }
+
+  function updateNpSubText() {
+    var sc = state.current;
+    if (!sc || !el.npSub) return;
+    el.npSub.textContent = [sc.author || '未知作者', sc.type,
+      'bpm ' + sc.bpm + ' · ticks ' + sc.ticks,
+      sc.stats.noteCount + ' 音', fmtDur(sc.stats.durationMs)].join(' · ');
+  }
+
+  function selectEntry(id, forceReset) {
     var entry = null;
     for (var i = 0; i < state.entries.length; i++) if (state.entries[i].id === id) { entry = state.entries[i]; break; }
     if (!entry) return;
 
     stopPlayback();
+    justHandledDrag = false;
+    dragSession = null;
     state.selectedId = id;
     state.currentEntry = entry;
     state.current = null;
@@ -703,6 +766,7 @@
 
     if (!entry.ok) {
       el.npTitle.textContent = entry.name;
+      updateNpTitleEditable(false);
       el.npSub.textContent = '解析失败：' + (entry.error || '未知原因');
       el.btnPlay.disabled = true;
       el.btnStop.disabled = true;
@@ -714,35 +778,70 @@
     }
 
     var sc;
-    try {
-      state.sourceJson = JSON.parse(entry.text);
-      sc = window.BGIParse.parseScore(state.sourceJson, { filename: entry.fileName });
-    } catch (e) {
-      entry.ok = false; entry.error = (e && e.message) || String(e);
-      toast('解析失败：' + entry.error, 'err');
-      renderList(); updateTrackNav();
-      return;
+    if (entry.isNew) {
+      if (forceReset) entry.workingNotes = [];
+      state.sourceJson = {
+        name: entry.name,
+        author: entry.author || '原创',
+        instrument: entry.instrument || '风物之诗琴',
+        type: 'midi',
+        bpm: entry.bpm || 120,
+        ticks: entry.ticks || 1000,
+        notes: ''
+      };
+      sc = {
+        ok: true,
+        isNew: true,
+        baseDurationMs: 0,
+        name: entry.name,
+        author: entry.author || '原创',
+        instrument: entry.instrument || '风物之诗琴',
+        type: 'midi',
+        bpm: entry.bpm || 120,
+        ticks: entry.ticks || 1000,
+        notes: (entry.workingNotes || []).map(copyNote),
+        warnings: [],
+        stats: {
+          events: 0,
+          noteCount: 0,
+          durationMs: 0,
+          keysUsed: [],
+          maxPolyphony: 0
+        }
+      };
+    } else {
+      try {
+        state.sourceJson = JSON.parse(entry.text);
+        sc = window.BGIParse.parseScore(state.sourceJson, { filename: entry.fileName });
+      } catch (e) {
+        entry.ok = false; entry.error = (e && e.message) || String(e);
+        toast('解析失败：' + entry.error, 'err');
+        renderList(); updateTrackNav();
+        return;
+      }
+      if (!sc.ok) {
+        entry.ok = false; entry.error = sc.error || '解析失败';
+        renderList(); renderDiag(entry, sc); updateTrackNav();
+        toast('解析失败：' + entry.error, 'err');
+        return;
+      }
+      sc.baseDurationMs = sc.stats ? sc.stats.durationMs : 0;
+      if (forceReset) entry.workingNotes = null;
+      if (entry.workingNotes) {
+        sc.notes = entry.workingNotes.map(copyNote);
+        sc.name = entry.name;
+      } else {
+        sc.notes = sc.notes.map(copyNote);
+      }
     }
-    if (!sc.ok) {
-      entry.ok = false; entry.error = sc.error || '解析失败';
-      renderList(); renderDiag(entry, sc); updateTrackNav();
-      toast('解析失败：' + entry.error, 'err');
-      return;
-    }
-
-    /* 复制一份 notes，编辑只动副本，不改原文件 */
-    sc.notes = sc.notes.map(function (n) {
-      return { key: n.key, pitch: n.pitch, start: n.start, end: n.end, velocity: n.velocity };
-    });
 
     state.current = sc;
     state.cursor = 0;
     recomputeDerived();
 
     el.npTitle.textContent = sc.name || entry.name;
-    el.npSub.textContent = [sc.author || '未知作者', sc.type,
-      'bpm ' + sc.bpm + ' · ticks ' + sc.ticks,
-      sc.stats.noteCount + ' 音', fmtDur(sc.stats.durationMs)].join(' · ');
+    updateNpTitleEditable(true);
+    updateNpSubText();
 
     el.btnPlay.disabled = false;
     el.btnStop.disabled = false;
@@ -760,15 +859,16 @@
     drawRoll(0);
   }
 
-  /** notes 变了之后统一重算：排序 / 最长时值 / 统计 */
+  /** notes 变了之后统一重算：排序 / 最长时值 / 统计 / 同步歌单 */
   function recomputeDerived() {
     var sc = state.current;
     if (!sc) return;
     sc.notes.sort(function (a, b) { return a.start - b.start; });
-    var maxDur = 1, keysUsed = {}, maxPoly = 0, atTime = {};
+    var maxDur = 1, maxEnd = 0, keysUsed = {}, maxPoly = 0, atTime = {};
     for (var i = 0; i < sc.notes.length; i++) {
       var n = sc.notes[i];
       if (n.end - n.start > maxDur) maxDur = n.end - n.start;
+      if (n.end > maxEnd) maxEnd = n.end;
       keysUsed[n.key] = true;
       atTime[n.start] = (atTime[n.start] || 0) + 1;
       if (atTime[n.start] > maxPoly) maxPoly = atTime[n.start];
@@ -778,9 +878,15 @@
     sc.stats.noteCount = sc.notes.length;
     sc.stats.keysUsed = Object.keys(keysUsed);
     sc.stats.maxPolyphony = maxPoly;
-    var lastEnd = sc.notes.length ? sc.notes[sc.notes.length - 1].end : 0;
-    sc.stats.durationMs = Math.max(sc.stats.durationMs || 0, lastEnd);
+    sc.stats.durationMs = sc.isNew ? maxEnd : Math.max(sc.baseDurationMs || 0, maxEnd);
     if (el.tTotal) el.tTotal.textContent = fmtTime(sc.stats.durationMs);
+    if (state.currentEntry) {
+      state.currentEntry.noteCount = sc.stats.noteCount;
+      state.currentEntry.durationMs = sc.stats.durationMs;
+      state.currentEntry.workingNotes = sc.notes.map(copyNote);
+    }
+    updateNpSubText();
+    renderList();
   }
 
   /* ═══════════════════ 播放调度 ═══════════════════ */
@@ -788,6 +894,7 @@
   function scoreMsAt(ctxTime) { return state.baseScoreMs + (ctxTime - state.baseCtxTime) * 1000 * state.speed; }
   function ctxTimeAt(scoreMs) { return state.baseCtxTime + (scoreMs - state.baseScoreMs) / 1000 / state.speed; }
   function duration() { return state.current ? state.current.stats.durationMs : 0; }
+  function maxScrollMs() { return Math.max(duration() + state.viewSec * 500, state.viewSec * 2000); }
 
   function currentScoreMs() {
     if (state.playing && state.engine) return clamp(scoreMsAt(engNow()), 0, duration() + 5000);
@@ -867,9 +974,10 @@
     drawRoll(0);
   }
 
-  function seekTo(ms) {
+  function seekTo(ms, allowBeyond) {
     if (!state.current) return;
-    ms = clamp(ms, 0, duration());
+    var limitMs = allowBeyond ? maxScrollMs() : Math.max(duration(), state.current.isNew ? maxScrollMs() : 0);
+    ms = clamp(ms, 0, limitMs);
     state.posMs = ms;
     if (state.playing) startPlayback(ms);
     else {
@@ -1139,11 +1247,32 @@
   }
 
   function onRollPointerDown(ev) {
-    if (!state.current) return;
     if (ev.button !== 0 && ev.button !== 1 && ev.button !== 2) return;
     var r = el.roll.getBoundingClientRect();
     var g = rollGeom();
     var x = ev.clientX - r.left, y = ev.clientY - r.top;
+
+    // 左侧音名列：即使尚未选曲也允许点击试听对应音高
+    if (ev.button === 0 && x < g.GUT && y > g.plotTop) {
+      var rRow0 = rowAtY(g, y);
+      if (rRow0 >= 0 && rRow0 <= 20) auditionKey(LABELS[rRow0]);
+      if (state.current) {
+        state.edit.selNote = null;
+        updateEditBar();
+        drawRoll(currentScoreMs());
+      }
+      justHandledDrag = true;
+      return;
+    }
+
+    // 未选曲时左键点按主网格：即点即建新曲谱
+    if (!state.current) {
+      if (ev.button === 0 && x >= g.GUT && y > g.plotTop) {
+        createNewScore({ silent: true });
+      } else {
+        return;
+      }
+    }
 
     // 中键或右键：平移时间轴
     if (ev.button === 1 || ev.button === 2) {
@@ -1163,7 +1292,7 @@
     // 顶部时间刻度尺区域：点击立即跳转进度，拖拽平移时间轴
     if (y <= g.plotTop && x >= g.GUT) {
       state.edit.selNote = null;
-      seekTo(g.timeOf(x));
+      seekTo(g.timeOf(x), true);
       updateEditBar();
       drawRoll(currentScoreMs());
       dragSession = {
@@ -1174,17 +1303,6 @@
       };
       justHandledDrag = true;
       try { el.roll.setPointerCapture(ev.pointerId); } catch (_) {}
-      return;
-    }
-
-    // 左侧音名列：点击试听对应音高并取消选中
-    if (x < g.GUT && y > g.plotTop) {
-      var rRow = rowAtY(g, y);
-      if (rRow >= 0 && rRow <= 20) auditionKey(LABELS[rRow]);
-      state.edit.selNote = null;
-      updateEditBar();
-      drawRoll(currentScoreMs());
-      justHandledDrag = true;
       return;
     }
 
@@ -1252,7 +1370,7 @@
 
     if (dragSession.type === 'pan') {
       var dt = (dx / g.plotW) * (g.t1 - g.t0);
-      seekTo(clamp(dragSession.startPosMs - dt, 0, duration()));
+      seekTo(clamp(dragSession.startPosMs - dt, 0, maxScrollMs()), true);
       drawRoll(currentScoreMs());
       return;
     }
@@ -1346,8 +1464,8 @@
     } else {
       var deltaX = (Math.abs(ev.deltaX) > Math.abs(ev.deltaY)) ? ev.deltaX : ev.deltaY;
       var stepSec = (state.viewSec * 0.12) * (deltaX > 0 ? 1 : -1);
-      var targetMs = clamp(currentScoreMs() + stepSec * 1000, 0, duration());
-      seekTo(targetMs);
+      var targetMs = clamp(currentScoreMs() + stepSec * 1000, 0, maxScrollMs());
+      seekTo(targetMs, true);
     }
     drawRoll(currentScoreMs());
   }
@@ -1390,8 +1508,9 @@
     var t = g.timeOf(x);
     var best = null, bestDist = Infinity, isEdge = false;
     var idx = upperBoundStart(notes, t + 600);
-    for (var i = Math.max(0, idx - 1); i >= 0 && i > idx - 500; i--) {
+    for (var i = idx - 1; i >= 0 && i > idx - 500; i--) {
       var n = notes[i];
+      if (!n) continue;
       if (n.end < t - 500) break;
       if (n.key !== key) continue;
       var x0 = g.xOf(n.start);
@@ -1482,7 +1601,7 @@
       ctx.fillStyle = '#b3b7bd';
       ctx.font = '11.5px "Segoe UI", system-ui, sans-serif';
       ctx.textBaseline = 'middle';
-      ctx.fillText('选择一首曲目后，这里会显示音符', g.GUT + 18, H / 2);
+      ctx.fillText('点击此处直接落音新建曲谱，或从左侧「＋ 新建曲谱 / 导入曲谱」开始', g.GUT + 18, H / 2);
       return;
     }
 
@@ -1587,8 +1706,8 @@
 
   function resetEdit() {
     if (!state.currentEntry) return;
-    selectEntry(state.currentEntry.id);
-    toast('已还原为原始曲谱', 'ok');
+    selectEntry(state.currentEntry.id, true);
+    toast('已还原为初始状态', 'ok');
   }
 
   function updateEditBar() {
@@ -1732,11 +1851,13 @@
       parts.push((e[1] ? 'U' : 'D') + e[2] + d);
     });
     var src = state.sourceJson || {};
+    var isFreshOrRenamed = !!(state.currentEntry && (state.currentEntry.isNew || state.currentEntry.renamed));
+    var baseName = sc.name || '未命名曲谱';
     return {
-      name: (sc.name || '未命名') + '（编辑）',
+      name: isFreshOrRenamed ? baseName : (baseName + '（编辑）'),
       author: src.author || '',
       instrument: src.instrument || '风物之诗琴',
-      description: '由「风物之诗琴 · 曲谱工坊」编辑导出｜源 type=' + (src.type || sc.type) +
+      description: '由「风物之诗琴 · 曲谱工坊」导出｜源 type=' + (src.type || sc.type) +
         '｜' + sc.notes.length + ' 音｜时长 ' + Math.round(sc.stats.durationMs / 1000) + 's',
       type: 'midi',
       bpm: 60,
@@ -1953,6 +2074,9 @@
       selectEntry(parseInt(li.getAttribute('data-id'), 10));
     });
 
+    if (el.btnNewScore) {
+      el.btnNewScore.addEventListener('click', function () { createNewScore(); });
+    }
     el.btnPickFiles.addEventListener('click', function () { el.fileInput.click(); });
     el.btnPickDir.addEventListener('click', function () { el.dirInput.click(); });
     el.fileInput.addEventListener('change', function (e) { importFiles(e.target.files); e.target.value = ''; });
@@ -1966,13 +2090,46 @@
       state.entries = [];
       state.selectedId = null;
       state.current = null;
+      state.currentEntry = null;
       stopPlayback();
       el.npTitle.textContent = '未选择曲目';
-      el.npSub.textContent = '从左侧导入曲谱，或把文件夹拖进来';
+      updateNpTitleEditable(false);
+      el.npSub.textContent = '从左侧新建或导入曲谱，也可以将文件夹拖进来';
       el.btnPlay.disabled = true; el.btnStop.disabled = true; el.seek.disabled = true;
       el.diag.textContent = '—';
       renderList(); updateTrackNav(); clearKeys(); drawRoll(0); updateEditBar();
     });
+
+    if (el.npTitle) {
+      var commitNpTitleRename = function () {
+        if (!state.current || !state.currentEntry) return;
+        var nextName = (el.npTitle.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!nextName) {
+          nextName = state.current.name || '未命名曲谱';
+        }
+        el.npTitle.textContent = nextName;
+        if (nextName !== state.current.name) {
+          state.current.name = nextName;
+          state.currentEntry.name = nextName;
+          state.currentEntry.renamed = true;
+          if (state.sourceJson) state.sourceJson.name = nextName;
+          renderList();
+          toast('曲名已更新为「' + nextName + '」', 'ok');
+        }
+      };
+      el.npTitle.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commitNpTitleRename();
+          el.npTitle.blur();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          if (state.current) el.npTitle.textContent = state.current.name || '未命名曲谱';
+          el.npTitle.blur();
+        }
+      });
+      el.npTitle.addEventListener('blur', commitNpTitleRename);
+    }
 
     el.btnPlay.addEventListener('click', function () {
       if (!state.current) return;
@@ -2121,7 +2278,7 @@
 
   function isTypingTarget(t) {
     var tag = (t && t.tagName) || '';
-    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!(t && t.isContentEditable);
   }
 
   function onKeyDown(e) {
