@@ -179,16 +179,14 @@ function pageScript(scoreUrls) {
     ok('标题已切换（' + title1 + ' -> ' + title2 + '）', title1 !== title2, title1 + ' / ' + title2);
     ok('连播开关默认为开', $('#autoplay').checked === true);
 
-    /* ───────── 5. 编辑：新增 / 选中 / 改音高 / 删除 / 撤销 / 还原 ───────── */
+    /* ───────── 5. 无模式合一：单行常驻工具栏 + 零布局跳动 + 新增/选中/改音高/删除/撤销/还原 ───────── */
     const before = notesCount();
-    ok('进入编辑模式前能读到音符数（' + before + '）', before > 0, String(before));
-
-    $('#modeEdit').click();
-    await sleep(150);
-    ok('编辑条已显示', $('#editBar').hidden === false);
+    ok('无模式工具栏直接能读到音符数（' + before + '）', before > 0, String(before));
+    ok('合一单行工具栏常驻显示', $('#editBar').hidden === false);
 
     const cv = $('#roll');
     const r = cv.getBoundingClientRect();
+    const rollTopBefore = r.top;
     const cx = Math.round(r.left + r.width * 0.62);
     const cy = Math.round(r.top + r.height * 0.72);
     cv.dispatchEvent(new MouseEvent('click', { clientX: cx, clientY: cy, bubbles: true }));
@@ -232,9 +230,9 @@ function pageScript(scoreUrls) {
     await sleep(120);
     ok('Delete 键可删除选中音符', notesCount() === nBeforeDel - 1, nBeforeDel + ' -> ' + notesCount());
 
-    $('#modePlay').click();
-    await sleep(120);
-    ok('切回演奏模式后编辑条隐藏', $('#editBar').hidden === true);
+    const rollTopAfter = cv.getBoundingClientRect().top;
+    ok('无模式交互全程零像素纵向跳动', Math.abs(rollTopAfter - rollTopBefore) < 1,
+      rollTopBefore + ' -> ' + rollTopAfter);
 
     /* ───────── 6. 歌单连播：曲终自动切下一首 ───────── */
     document.querySelectorAll('#scoreList li[data-id]')[0].click();

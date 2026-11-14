@@ -105,7 +105,7 @@
     playKeys: true,
 
     edit: {
-      on: false,
+      on: true,
       selNote: null,
       undo: [],
       dirty: false
@@ -1025,9 +1025,6 @@
     pointerActiveKeys[k] = true;
     var p = keyToPitch(k);
     state.audition[k] = Date.now() + 180;
-    if (state.edit.on && state.edit.selNote) {
-      editPitchTo(p);
-    }
     safeResume().then(function () {
       noteOn(p, engNow() + 0.005, 0.45, 0.95);
     });
@@ -1046,9 +1043,6 @@
     if (!ensureEngine()) return;
     var p = keyToPitch(k), dur = 0.45;
     state.audition[k] = Date.now() + 180;
-    if (state.edit.on && state.edit.selNote) {
-      editPitchTo(p);
-    }
     safeResume().then(function () { noteOn(p, engNow() + 0.005, dur, 0.95); });
   }
 
@@ -1135,8 +1129,7 @@
       var g = rollGeom();
       var x = ev.clientX - r.left, y = ev.clientY - r.top;
 
-      if (state.edit.on) { handleRollEdit(g, x, y); return; }
-      seekTo(g.timeOf(x));
+      handleRollEdit(g, x, y);
     });
 
     el.roll.addEventListener('wheel', onRollWheel, { passive: false });
@@ -1167,8 +1160,31 @@
 
     if (ev.button !== 0) return;
 
-    if (!state.edit.on) {
+    // 顶部时间刻度尺区域：点击立即跳转进度，拖拽平移时间轴
+    if (y <= g.plotTop && x >= g.GUT) {
+      state.edit.selNote = null;
       seekTo(g.timeOf(x));
+      updateEditBar();
+      drawRoll(currentScoreMs());
+      dragSession = {
+        type: 'pan',
+        pointerId: ev.pointerId,
+        startX: ev.clientX,
+        startPosMs: currentScoreMs()
+      };
+      justHandledDrag = true;
+      try { el.roll.setPointerCapture(ev.pointerId); } catch (_) {}
+      return;
+    }
+
+    // 左侧音名列：点击试听对应音高并取消选中
+    if (x < g.GUT && y > g.plotTop) {
+      var rRow = rowAtY(g, y);
+      if (rRow >= 0 && rRow <= 20) auditionKey(LABELS[rRow]);
+      state.edit.selNote = null;
+      updateEditBar();
+      drawRoll(currentScoreMs());
+      justHandledDrag = true;
       return;
     }
 
@@ -1193,6 +1209,10 @@
         changed: false
       };
       try { el.roll.setPointerCapture(ev.pointerId); } catch (_) {}
+    } else if (state.playing) {
+      // 播放中点击空白处：跳转播放时刻，避免误加音符
+      seekTo(g.timeOf(x));
+      justHandledDrag = true;
     } else {
       dragSession = {
         type: 'empty',
@@ -1214,15 +1234,15 @@
     var x = ev.clientX - r.left, y = ev.clientY - r.top;
 
     if (!dragSession) {
-      if (!state.edit.on) {
-        el.roll.style.cursor = 'crosshair';
+      if (y <= g.plotTop || x < g.GUT) {
+        el.roll.style.cursor = 'pointer';
         return;
       }
       var hover = hitTestDetailed(g, x, y);
       if (hover) {
         el.roll.style.cursor = hover.isEdge ? 'ew-resize' : 'move';
       } else {
-        el.roll.style.cursor = 'cell';
+        el.roll.style.cursor = state.playing ? 'crosshair' : 'cell';
       }
       return;
     }
@@ -1332,8 +1352,9 @@
     drawRoll(currentScoreMs());
   }
 
-  /* 编辑模式下的点击：命中音符 -> 选中；空白 -> 新增 */
+  /* 无模式点击：刻度尺已在 pointerdown 跳转；命中音符 -> 选中；空白网格 -> 新增 */
   function handleRollEdit(g, x, y) {
+    if (y <= g.plotTop || x < g.GUT) return;
     var hit = hitTest(g, x, y);
     if (hit) {
       state.edit.selNote = hit;
@@ -1418,9 +1439,17 @@
     ctx.fillStyle = '#fbfaf8';
     ctx.fillRect(0, 0, W, H);
 
+    /* 顶部时间刻度尺底栏（点击/拖拽跳转播放进度） */
+    ctx.fillStyle = '#f3f1ec';
+    ctx.fillRect(g.GUT, 0, W - g.GUT, g.plotTop);
+    ctx.fillStyle = '#e0ddd5';
+    ctx.fillRect(0, g.plotTop - 0.5, W, 0.5);
+
     /* 左侧音名列 */
     ctx.fillStyle = '#f5f4f1';
     ctx.fillRect(0, 0, g.GUT, H);
+    ctx.fillStyle = '#e5e2db';
+    ctx.fillRect(g.GUT - 0.5, 0, 0.5, H);
 
     /* 21 行：C 行标音名，其余标键字母 */
     for (var r = 0; r < 21; r++) {
@@ -1457,18 +1486,17 @@
       return;
     }
 
-    /* 时间刻度与网格 */
-    if (state.edit.on) {
-      var snapMs = getSnapMs();
-      var pixPerMs = g.plotW / (g.t1 - g.t0);
-      var drawStepMs = snapMs;
-      while (drawStepMs * pixPerMs < 12) drawStepMs *= 2;
-      var firstSnap = Math.ceil(g.t0 / drawStepMs) * drawStepMs;
-      for (var st = firstSnap; st <= g.t1; st += drawStepMs) {
-        var sx = g.xOf(st);
-        ctx.fillStyle = '#f0ede6';
-        ctx.fillRect(sx, g.plotTop, 1, g.plotH);
-      }
+    /* 时间刻度与吸附网格 */
+    var snapMs = getSnapMs();
+    var pixPerMs = g.plotW / (g.t1 - g.t0);
+    var drawStepMs = snapMs;
+    while (drawStepMs * pixPerMs < 14) drawStepMs *= 2;
+    var firstSnap = Math.ceil(g.t0 / drawStepMs) * drawStepMs;
+    for (var st = firstSnap; st <= g.t1; st += drawStepMs) {
+      var sx = g.xOf(st);
+      if (sx < g.GUT) continue;
+      ctx.fillStyle = '#f0ede6';
+      ctx.fillRect(sx, g.plotTop, 1, g.plotH);
     }
 
     var stepMs = state.viewSec <= 5 ? 1000 : (state.viewSec <= 12 ? 2000 : 4000);
@@ -1476,18 +1504,21 @@
     ctx.textBaseline = 'top';
     for (var tt = first; tt <= g.t1; tt += stepMs) {
       var xx = g.xOf(tt);
+      if (xx < g.GUT) continue;
       ctx.fillStyle = '#e5e2db';
       ctx.fillRect(xx, g.plotTop, 1, g.plotH);
+      ctx.fillStyle = '#d5d1c8';
+      ctx.fillRect(xx, g.plotTop - 4, 1, 4);
       if (g.rowH >= 5) {
-        ctx.fillStyle = '#b3b7bd';
+        ctx.fillStyle = '#8b9099';
         ctx.font = LABEL_FONT;
-        ctx.fillText((tt / 1000).toFixed(0) + 's', xx + 4, g.PAD);
+        ctx.fillText((tt / 1000).toFixed(0) + 's', xx + 4, g.PAD - 1);
       }
     }
 
     /* 播放头 */
     var hx = g.GUT + g.plotW * 0.25;
-    ctx.fillStyle = '#d6d2c9';
+    ctx.fillStyle = '#2f6b58';
     ctx.fillRect(hx - 0.5, g.plotTop, 1, g.plotH);
 
     /* 音符 */
@@ -1523,10 +1554,10 @@
     }
 
     /* 播放头顶部小三角 */
-    ctx.fillStyle = '#8b9099';
+    ctx.fillStyle = '#2f6b58';
     ctx.beginPath();
-    ctx.moveTo(hx - 3.5, g.plotTop - 5);
-    ctx.lineTo(hx + 3.5, g.plotTop - 5);
+    ctx.moveTo(hx - 4, g.plotTop - 6);
+    ctx.lineTo(hx + 4, g.plotTop - 6);
     ctx.lineTo(hx, g.plotTop - 0.5);
     ctx.closePath();
     ctx.fill();
@@ -1543,7 +1574,7 @@
   }
 
   function undoEdit() {
-    if (!state.edit.undo.length || !state.current) { toast('没有可撤销的操作'); return; }
+    if (!state.current || !state.edit.undo.length) { toast('没有可撤销的操作'); return; }
     var snap = state.edit.undo.pop();
     state.current.notes = snap;
     state.edit.selNote = null;
@@ -1557,27 +1588,33 @@
   function resetEdit() {
     if (!state.currentEntry) return;
     selectEntry(state.currentEntry.id);
-    if (state.edit.on) { /* selectEntry 已经重置了编辑态 */ }
     toast('已还原为原始曲谱', 'ok');
   }
 
   function updateEditBar() {
-    if (!el.editBar) return;
-    el.editBar.hidden = !state.edit.on;
-    /* ⚠ 即使不在编辑模式也要维护文案：一是切回来时不会闪旧内容，
-       二是外部（测试 / 诊断）可以随时读到「共 N 音」这个不变量。 */
+    if (el.editBar) el.editBar.hidden = false;
     var sel = state.edit.selNote;
-    var total = state.current ? state.current.notes.length : 0;
-    if (sel && state.current && state.current.notes.indexOf(sel) >= 0) {
-      el.editInfo.innerHTML =
-        '已选 <b>' + pitchName(sel.pitch) + '</b> · 起点 <b>' + fmtTime(sel.start) +
-        '</b> · 时值 <b>' + Math.round(sel.end - sel.start) + 'ms</b>' +
-        ' · 共 ' + total + ' 音';
-    } else {
-      el.editInfo.textContent = '未选中音符 · 点击音符选中，点击空白处添加 · 共 ' + total + ' 音';
+    var hasScore = !!state.current;
+    var total = hasScore ? state.current.notes.length : 0;
+    var hasSel = !!(sel && hasScore && state.current.notes.indexOf(sel) >= 0);
+
+    if (el.editInfo) {
+      if (hasSel) {
+        el.editInfo.innerHTML =
+          '已选 <b>' + pitchName(sel.pitch) + '</b> · 起点 <b>' + fmtTime(sel.start) +
+          '</b> · 时值 <b>' + Math.round(sel.end - sel.start) + 'ms</b>' +
+          ' · 共 ' + total + ' 音';
+      } else if (hasScore) {
+        el.editInfo.textContent = '共 ' + total + ' 音 · 刻度尺跳转 · 拖拽音符编辑 · 点击空白加音';
+      } else {
+        el.editInfo.textContent = '未选择曲目 · 共 0 音';
+      }
     }
+
     if (el.btnEditUndo) el.btnEditUndo.disabled = !state.edit.undo.length;
-    var hasSel = !!(sel && state.current && state.current.notes.indexOf(sel) >= 0);
+    if (el.btnEditReset) el.btnEditReset.disabled = !hasScore;
+    if (el.btnEditExport) el.btnEditExport.disabled = !hasScore;
+
     if (el.btnTimeLeft) el.btnTimeLeft.disabled = !hasSel;
     if (el.btnTimeRight) el.btnTimeRight.disabled = !hasSel;
     if (el.btnPitchDown) el.btnPitchDown.disabled = !hasSel;
@@ -1585,7 +1622,10 @@
     if (el.btnDurDown) el.btnDurDown.disabled = !hasSel;
     if (el.btnDurUp) el.btnDurUp.disabled = !hasSel;
     if (el.btnDel) el.btnDel.disabled = !hasSel;
-    if (el.btnDeselect) el.btnDeselect.disabled = !hasSel;
+    if (el.btnDeselect) {
+      el.btnDeselect.disabled = !hasSel;
+      el.btnDeselect.hidden = !hasSel;
+    }
   }
 
   function getSnapMs() {
@@ -1730,19 +1770,11 @@
     } catch (_) { }
   }
 
-  /* ═══════════════════ 模式 ═══════════════════ */
+  /* ═══════════════════ 模式（无模式合一） ═══════════════════ */
 
-  function setMode(edit) {
-    state.edit.on = !!edit;
-    if (el.modePlay) el.modePlay.classList.toggle('is-on', !state.edit.on);
-    if (el.modeEdit) el.modeEdit.classList.toggle('is-on', state.edit.on);
-    if (!state.edit.on) state.edit.selNote = null;
-    if (el.rollHint) {
-      el.rollHint.textContent = state.edit.on
-        ? '拖拽音符移动/改高 · 拖右侧改时长 · 滚轮平移 · 方向键微调 · Esc取消'
-        : '点击卷帘跳转到该时刻';
-    }
-    el.roll.style.cursor = state.edit.on ? 'cell' : 'crosshair';
+  function setMode() {
+    state.edit.on = true;
+    el.roll.style.cursor = 'cell';
     updateEditBar();
     drawRoll(currentScoreMs());
   }
@@ -1951,8 +1983,8 @@
     el.btnPrev.addEventListener('click', function () { jumpTrack(-1, state.playing); });
     el.btnNext.addEventListener('click', function () { jumpTrack(1, state.playing); });
 
-    el.modePlay.addEventListener('click', function () { setMode(false); });
-    el.modeEdit.addEventListener('click', function () { setMode(true); });
+    if (el.modePlay) el.modePlay.addEventListener('click', function () { setMode(false); });
+    if (el.modeEdit) el.modeEdit.addEventListener('click', function () { setMode(true); });
 
     el.speed.addEventListener('input', function () {
       var v = parseFloat(el.speed.value);
@@ -2149,9 +2181,6 @@
       if (FALLBACK_KEY_TO_PITCH[k] != null && !state.heldKeys[k]) {
         e.preventDefault();
         state.heldKeys[k] = true;
-        if (state.edit.on && state.edit.selNote) {
-          editPitchTo(keyToPitch(k));
-        }
         if (!ensureEngine()) return;
         safeResume().then(function () { noteOn(keyToPitch(k), engNow() + 0.005, 0.45, 0.92); });
       }
@@ -2203,7 +2232,7 @@
     renderList();
     updateTrackNav();
     updateEditBar();
-    setMode(false);
+    setMode(true);
     bind();
     requestAnimationFrame(frame);
 

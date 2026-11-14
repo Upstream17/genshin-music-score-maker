@@ -590,27 +590,56 @@ html, body {
 .btn-mode:hover { color: var(--accent); border-color: var(--accent); }
 .roll-hint-kbd { font: 400 10.5px var(--mono); color: var(--ink-4); letter-spacing: .02em; }
 
-/* 编辑条 */
-.editbar {
+/* 卷帘与无模式单行工具栏 */
+.roll { flex: 1 1 auto; min-height: 158px; display: flex; flex-direction: column; padding-top: 12px; }
+.roll-head {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin-top: 12px;
-  padding: 9px 12px;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-sm);
-  background: var(--surface);
-  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
+  height: 30px;
+  padding-bottom: 6px;
+  flex-wrap: nowrap;
+  user-select: none;
 }
-.edit-info { font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.edit-ops { display: flex; align-items: center; gap: 5px; margin-left: auto; flex-wrap: wrap; }
-
-/* 卷帘 */
-.roll { flex: 1 1 auto; min-height: 148px; display: flex; flex-direction: column; padding-top: 14px; }
-.roll-head { display: flex; align-items: center; gap: 12px; padding-bottom: 8px; }
-.label { font-size: 10px; letter-spacing: .18em; color: var(--ink-3); text-transform: uppercase; }
-.roll-hint { font-size: 11px; color: var(--ink-4); }
-.roll-tools { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.roll-head-left {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.roll-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.label { font-size: 10px; letter-spacing: .18em; color: var(--ink-3); text-transform: uppercase; flex: 0 0 auto; }
+.edit-info {
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.edit-info b { color: var(--ink); font-weight: 600; }
+.edit-ops { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+.btn-group { display: inline-flex; align-items: center; }
+.btn-group .btn-xs:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.btn-group .btn-xs:last-child { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -1px; }
+.btn-xs { padding: 2px 7px; font-size: 11px; height: 23px; line-height: 1; border-radius: var(--r-sm); }
+.btn-group .btn-xs { min-width: 22px; padding: 2px 5px; font-family: var(--mono); }
+.select-xs {
+  max-width: 72px;
+  height: 23px;
+  padding: 1px 5px;
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+.roll-tools { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; }
 .roll-canvas {
   flex: 1 1 auto;
   min-height: 130px;
@@ -619,7 +648,7 @@ html, body {
   overflow: hidden;
   background: var(--surface);
 }
-#roll { display: block; width: 100%; height: 100%; cursor: crosshair; }
+#roll { display: block; width: 100%; height: 100%; cursor: cell; }
 
 /* 滑杆：1px 轨 + 小方块 */
 input[type="range"] {
@@ -885,54 +914,56 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
         <div class="keyboard" id="keyboard"></div>
       </section>
 
-      <section id="editBar" class="editbar" hidden>
-        <span id="editInfo" class="edit-info">未选中音符 · 拖拽音符移动/改高，拖拽右侧改时长，滚轮平移</span>
-        <div class="edit-ops">
-          <button id="btnTimeLeft" class="btn btn-sm" title="向左平移起始时间（←）">◂ 前移</button>
-          <button id="btnTimeRight" class="btn btn-sm" title="向右平移起始时间（→）">后移 ▸</button>
-          <button id="btnPitchDown" class="btn btn-sm" title="降一个音级（↓）">◂ 音高</button>
-          <button id="btnPitchUp" class="btn btn-sm" title="升一个音级（↑）">音高 ▸</button>
-          <button id="btnDurDown" class="btn btn-sm" title="缩短时值（Shift+←）">◂ 时长</button>
-          <button id="btnDurUp" class="btn btn-sm" title="加长时值（Shift+→）">时长 ▸</button>
-          <span class="mini-label" style="margin-left:4px">吸附</span>
-          <select id="editSnap" class="select" style="max-width:85px;padding:3px 6px;font-size:11px" title="网格吸附精度">
-            <option value="20">20ms</option>
-            <option value="50" selected>50ms</option>
-            <option value="100">100ms</option>
-            <option value="quarter">1/4 拍</option>
-            <option value="eighth">1/8 拍</option>
-          </select>
-          <button id="btnDel" class="btn btn-sm" title="删除（Delete）">删除</button>
-          <button id="btnDeselect" class="btn btn-sm" title="取消选中（Esc）">取消选中</button>
-          <span class="vrule"></span>
-          <button id="btnEditUndo" class="btn btn-sm" title="撤销（Ctrl+Z）">撤销</button>
-          <button id="btnEditReset" class="btn btn-sm">还原</button>
-          <button id="btnEditExport" class="btn btn-sm btn-ink">导出 JSON</button>
-        </div>
-      </section>
-
       <section class="roll">
-        <div class="roll-head">
-          <span class="label">音符</span>
-
-          <div class="mode-pills" role="tablist">
-            <button id="modePlay" class="mode-pill is-on" role="tab">演奏</button>
-            <button id="modeEdit" class="mode-pill" role="tab">编辑</button>
+        <div class="roll-head" id="editBar">
+          <div class="roll-head-left">
+            <span class="label">音符</span>
+            <label class="check check-sm" title="允许使用键盘 QWERTYU / ASDFGHJ / ZXCVBNM 弹奏琴键">
+              <input type="checkbox" id="playKeys" checked>
+              <i></i><span>键盘弹奏</span>
+            </label>
+            <span class="vrule"></span>
+            <span id="editInfo" class="edit-info">未选择曲目</span>
           </div>
 
-          <label class="check check-sm" title="允许键盘弹奏琴键">
-            <input type="checkbox" id="playKeys" checked>
-            <i></i><span>键盘弹奏</span>
-          </label>
-          <span id="playHint" class="roll-hint-kbd">QWERTYU / ASDFGHJ / ZXCVBNM</span>
+          <div class="roll-head-right">
+            <div class="edit-ops">
+              <div class="btn-group" title="平移选中音符起点（← / →）">
+                <button id="btnTimeLeft" class="btn btn-xs" title="向左平移起始时间（←）" disabled>◂</button>
+                <button id="btnTimeRight" class="btn btn-xs" title="向右平移起始时间（→）" disabled>▸</button>
+              </div>
+              <div class="btn-group" title="调整选中音符音高（↓ / ↑）">
+                <button id="btnPitchDown" class="btn btn-xs" title="降一个音级（↓）" disabled>↓</button>
+                <button id="btnPitchUp" class="btn btn-xs" title="升一个音级（↑）" disabled>↑</button>
+              </div>
+              <div class="btn-group" title="调整选中音符时值（Shift+← / Shift+→）">
+                <button id="btnDurDown" class="btn btn-xs" title="缩短时值（Shift+←）" disabled>−</button>
+                <button id="btnDurUp" class="btn btn-xs" title="加长时值（Shift+→）" disabled>+</button>
+              </div>
+              <button id="btnDel" class="btn btn-xs" title="删除选中音符（Delete）" disabled>删除</button>
+              <button id="btnDeselect" class="btn btn-xs" title="取消选中（Esc）" hidden>取消</button>
+              <span class="vrule"></span>
+              <span class="mini-label">吸附</span>
+              <select id="editSnap" class="select select-xs" title="网格吸附精度">
+                <option value="20">20ms</option>
+                <option value="50" selected>50ms</option>
+                <option value="100">100ms</option>
+                <option value="quarter">1/4 拍</option>
+                <option value="eighth">1/8 拍</option>
+              </select>
+              <button id="btnEditUndo" class="btn btn-xs" title="撤销（Ctrl+Z）" disabled>撤销</button>
+              <button id="btnEditReset" class="btn btn-xs" title="还原为原始曲谱" disabled>还原</button>
+              <button id="btnEditExport" class="btn btn-xs btn-ink" title="导出 JSON" disabled>导出</button>
+            </div>
 
-          <span id="rollHint" class="roll-hint">点击卷帘跳转到该时刻</span>
+            <span class="vrule"></span>
 
-          <div class="roll-tools">
-            <span class="mini-label">窗口</span>
-            <input type="range" id="zoom" min="3" max="24" step="1" value="8">
-            <span class="mini-val" id="zoomVal">8 秒</span>
-            <button id="btnFitAll" class="btn btn-sm">全曲</button>
+            <div class="roll-tools">
+              <span class="mini-label">窗口</span>
+              <input type="range" id="zoom" min="3" max="24" step="1" value="8">
+              <span class="mini-val" id="zoomVal">8 秒</span>
+              <button id="btnFitAll" class="btn btn-xs">全曲</button>
+            </div>
           </div>
         </div>
         <div class="roll-canvas"><canvas id="roll"></canvas></div>
