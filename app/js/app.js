@@ -674,13 +674,127 @@
         : esc(e.error || '无法解析');
       html.push(
         '<li class="' + cls + '" data-id="' + e.id + '" title="' + esc(e.path) + '">' +
-        '<div class="li-name">' + badge + '<span class="nm">' + esc(e.name) + '</span></div>' +
+        '<div class="li-name">' +
+          badge +
+          '<span class="nm">' + esc(e.name) + '</span>' +
+          '<span class="li-actions">' +
+            '<button type="button" class="li-btn li-edit" data-action="edit" title="重命名此曲">' +
+              '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>' +
+            '</button>' +
+            '<button type="button" class="li-btn li-del" data-action="del" title="移除此曲">' +
+              '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>' +
+            '</button>' +
+          '</span>' +
+        '</div>' +
         '<div class="li-sub">' + sub + '</div>' +
         '</li>'
       );
     }
     el.scoreList.innerHTML = html.join('') ||
       '<li class="empty-state">还没有曲谱<br>点击上方「＋ 新建曲谱」或导入 .json</li>';
+  }
+
+  function resetToEmptyState() {
+    state.selectedId = null;
+    state.current = null;
+    state.currentEntry = null;
+    state.sourceJson = null;
+    stopPlayback();
+    el.npTitle.textContent = '未选择曲目';
+    updateNpTitleEditable(false);
+    el.npSub.textContent = '从左侧新建或导入曲谱，也可以将文件夹拖进来';
+    el.btnPlay.disabled = true; el.btnStop.disabled = true; el.seek.disabled = true;
+    el.tTotal.textContent = '0:00.0';
+    el.diag.textContent = '—';
+    renderList(); updateTrackNav(); clearKeys(); drawRoll(0); updateEditBar();
+  }
+
+  function deleteEntry(id) {
+    var idx = -1, target = null;
+    for (var i = 0; i < state.entries.length; i++) {
+      if (state.entries[i].id === id) { idx = i; target = state.entries[i]; break; }
+    }
+    if (idx < 0 || !target) return;
+
+    var removedName = target.name || '未命名';
+    var wasSelected = (state.selectedId === id);
+    state.entries.splice(idx, 1);
+
+    if (wasSelected) {
+      if (state.entries.length > 0) {
+        var nextIdx = Math.min(idx, state.entries.length - 1);
+        selectEntry(state.entries[nextIdx].id);
+      } else {
+        resetToEmptyState();
+      }
+    } else {
+      renderList();
+      updateTrackNav();
+    }
+    toast('已移除「' + removedName + '」', 'ok');
+  }
+
+  function startInlineListRename(li, id) {
+    var entry = null;
+    for (var i = 0; i < state.entries.length; i++) {
+      if (state.entries[i].id === id) { entry = state.entries[i]; break; }
+    }
+    if (!entry || !li) return;
+    var nmEl = li.querySelector('.nm');
+    if (!nmEl) return;
+
+    nmEl.setAttribute('contenteditable', 'true');
+    nmEl.setAttribute('spellcheck', 'false');
+    nmEl.focus();
+    try {
+      var range = document.createRange();
+      range.selectNodeContents(nmEl);
+      var sel = window.getSelection();
+      if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+    } catch (_) {}
+
+    var done = false;
+    function finish(save) {
+      if (done) return;
+      done = true;
+      nmEl.removeAttribute('contenteditable');
+      nmEl.removeEventListener('keydown', onKey);
+      nmEl.removeEventListener('blur', onBlur);
+      if (!save) {
+        nmEl.textContent = entry.name || '未命名曲谱';
+        return;
+      }
+      var nextName = (nmEl.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!nextName) nextName = entry.name || '未命名曲谱';
+      nmEl.textContent = nextName;
+      if (nextName !== entry.name) {
+        entry.name = nextName;
+        entry.renamed = true;
+        if (state.selectedId === entry.id) {
+          if (state.current) state.current.name = nextName;
+          if (state.sourceJson) state.sourceJson.name = nextName;
+          if (el.npTitle) el.npTitle.textContent = nextName;
+        }
+        renderList();
+        toast('曲名已更新为「' + nextName + '」', 'ok');
+      }
+    }
+    function onKey(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(true);
+        nmEl.blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(false);
+        nmEl.blur();
+      }
+    }
+    function onBlur() { finish(true); }
+    nmEl.addEventListener('keydown', onKey);
+    nmEl.addEventListener('blur', onBlur);
   }
 
   /* ═══════════════════ 新建与选中曲目 ═══════════════════ */
@@ -2069,9 +2183,30 @@
 
   function bind() {
     el.scoreList.addEventListener('click', function (ev) {
+      var actBtn = ev.target.closest ? ev.target.closest('button[data-action]') : null;
       var li = ev.target.closest ? ev.target.closest('li[data-id]') : null;
       if (!li) return;
-      selectEntry(parseInt(li.getAttribute('data-id'), 10));
+      var id = parseInt(li.getAttribute('data-id'), 10);
+      if (actBtn) {
+        ev.stopPropagation();
+        var act = actBtn.getAttribute('data-action');
+        if (act === 'del') {
+          deleteEntry(id);
+        } else if (act === 'edit') {
+          startInlineListRename(li, id);
+        }
+        return;
+      }
+      if (ev.target && ev.target.isContentEditable) return;
+      if (state.selectedId === id && state.current) return;
+      selectEntry(id);
+    });
+    el.scoreList.addEventListener('dblclick', function (ev) {
+      var nm = ev.target.closest ? ev.target.closest('.nm') : null;
+      var li = ev.target.closest ? ev.target.closest('li[data-id]') : null;
+      if (!nm || !li) return;
+      ev.stopPropagation();
+      startInlineListRename(li, parseInt(li.getAttribute('data-id'), 10));
     });
 
     if (el.btnNewScore) {
@@ -2088,16 +2223,7 @@
     el.search.addEventListener('input', function () { state.filter = el.search.value; renderList(); });
     el.btnClearList.addEventListener('click', function () {
       state.entries = [];
-      state.selectedId = null;
-      state.current = null;
-      state.currentEntry = null;
-      stopPlayback();
-      el.npTitle.textContent = '未选择曲目';
-      updateNpTitleEditable(false);
-      el.npSub.textContent = '从左侧新建或导入曲谱，也可以将文件夹拖进来';
-      el.btnPlay.disabled = true; el.btnStop.disabled = true; el.seek.disabled = true;
-      el.diag.textContent = '—';
-      renderList(); updateTrackNav(); clearKeys(); drawRoll(0); updateEditBar();
+      resetToEmptyState();
     });
 
     if (el.npTitle) {

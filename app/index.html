@@ -246,7 +246,72 @@ html, body {
   color: var(--ink);
   min-width: 0;
 }
-.li-name .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.li-name .nm {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.li-name .nm[contenteditable="true"] {
+  overflow: hidden;
+  text-overflow: clip;
+  background: var(--surface);
+  border-bottom: 1px solid var(--accent);
+  outline: none;
+  padding: 0 4px;
+  border-radius: 2px;
+  cursor: text;
+}
+.li-actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity .14s ease-out;
+}
+.list li:hover .li-actions,
+.list li.sel .li-actions,
+.list li:focus-within .li-actions {
+  opacity: 1;
+}
+.li-btn {
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: background .12s ease-out, color .12s ease-out, border-color .12s ease-out;
+}
+.li-btn svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.li-btn:hover {
+  background: var(--surface);
+  border-color: var(--rule-2);
+  color: var(--accent);
+}
+.li-btn.li-del:hover {
+  color: var(--danger);
+  border-color: #e0c4bd;
+  background: #fdf6f4;
+}
 .li-sub {
   margin-top: 2px;
   font: 400 10.5px var(--mono);

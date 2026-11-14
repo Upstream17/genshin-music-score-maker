@@ -326,6 +326,29 @@ function pageScript(scoreUrls) {
     ok('切歌再切回后新编曲谱音符保留（1 音）', notesCount() === 1 && $('#npTitle').textContent === '晨曦酒庄练习曲',
       $('#npTitle').textContent + ' / ' + notesCount());
 
+    /* ───────── 10. 歌单曲目单独编辑重命名与单独删除 ───────── */
+    const firstLi = document.querySelectorAll('#scoreList li[data-id]')[0];
+    const editBtn = firstLi.querySelector('.li-edit');
+    ok('歌单项带有单独编辑与删除按钮', !!editBtn && !!firstLi.querySelector('.li-del'));
+    editBtn.click();
+    await sleep(80);
+    const nmNode = firstLi.querySelector('.nm');
+    ok('点击歌单项编辑按钮进入行内编辑状态', nmNode.getAttribute('contenteditable') === 'true');
+    nmNode.textContent = '风神之诗练习';
+    nmNode.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await sleep(100);
+    ok('歌单项行内改名后主标题与列表同步（' + $('#npTitle').textContent + '）',
+      $('#npTitle').textContent === '风神之诗练习' &&
+      document.querySelector('#scoreList li.sel .nm').textContent === '风神之诗练习');
+
+    const delBtn = document.querySelector('#scoreList li[data-id] .li-del');
+    delBtn.click();
+    await sleep(150);
+    const lisAfterSingleDel = document.querySelectorAll('#scoreList li[data-id]');
+    ok('点击歌单项删除按钮仅移除该曲（3 -> 2 首）', lisAfterSingleDel.length === 2, '当前 ' + lisAfterSingleDel.length);
+    ok('删除当前选中曲目后自动无缝切到下一首（' + $('#npTitle').textContent + '）',
+      $('#npTitle').textContent !== '风神之诗练习' && $('#npTitle').textContent !== '未选择曲目');
+
     return out.join('\\n');
   } catch (e) {
     out.push('FATAL  ' + (e && e.stack ? e.stack : e));
