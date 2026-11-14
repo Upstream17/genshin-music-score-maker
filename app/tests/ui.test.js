@@ -349,43 +349,68 @@ function pageScript(scoreUrls) {
     ok('删除当前选中曲目后自动无缝切到下一首（' + $('#npTitle').textContent + '）',
       $('#npTitle').textContent !== '风神之诗练习' && $('#npTitle').textContent !== '未选择曲目');
 
-    /* ───────── 11. 冗余空白清理 + 时间戳微调（按钮与小键盘） + 边播边录 ───────── */
+    /* ───────── 11. 冗余空白清理 + ? 帮助弹窗 + 方向键微调时间戳 + 按键不松随时间戳实时拉长音符 ───────── */
     ok('音色与设置底部冗余 #diag 空白框已移除', !document.querySelector('#diag'));
+
+    $('#btnHelp').click();
+    await sleep(60);
+    ok('点击「?」按钮打开操作说明弹窗', $('#helpModal').hidden === false);
+    $('#btnHelpClose').click();
+    await sleep(60);
+    ok('点击关闭按钮收起操作说明弹窗', $('#helpModal').hidden === true);
 
     $('#btnNewScore').click();
     await sleep(150);
     ok('新建空白曲谱供录制与微调测试（0 音）', notesCount() === 0);
 
-    /* 设置吸附步进为 100ms 并测试时间戳微调按钮与小键盘 Numpad6/Numpad4 */
+    /* 设置吸附步进为 100ms 并测试时间戳微调按钮与方向键 ArrowRight / ArrowLeft */
     $('#editSnap').value = '100';
     $('#editSnap').dispatchEvent(new Event('change'));
     $('#btnStepFwd').click();
     await sleep(80);
     ok('时间戳前进按钮微调 +100ms（' + $('#tNow').textContent + '）', $('#tNow').textContent === '0:00.1', $('#tNow').textContent);
 
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: '6', code: 'Numpad6', bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', code: 'ArrowRight', bubbles: true }));
     await sleep(80);
-    ok('小键盘 Numpad6 微调当前时间戳 +100ms（' + $('#tNow').textContent + '）', $('#tNow').textContent === '0:00.2', $('#tNow').textContent);
+    ok('方向键 → 微调当前时间戳 +100ms（' + $('#tNow').textContent + '）', $('#tNow').textContent === '0:00.2', $('#tNow').textContent);
 
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: '4', code: 'Numpad4', bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', code: 'ArrowLeft', bubbles: true }));
     await sleep(80);
-    ok('小键盘 Numpad4 微调当前时间戳 -100ms（' + $('#tNow').textContent + '）', $('#tNow').textContent === '0:00.1', $('#tNow').textContent);
+    ok('方向键 ← 微调当前时间戳 -100ms（' + $('#tNow').textContent + '）', $('#tNow').textContent === '0:00.1', $('#tNow').textContent);
 
-    /* 开启录制：先在暂停态定点录入 1 个音，再在播放态实时边播边录 1 个音 */
+    /* 开启录制：验证暂停态按住 Q 不松并用 → 后移时间戳时，未松键前音符实时变长 */
     $('#btnRecord').click();
     await sleep(80);
     ok('开启录制模式（按钮高亮且文案为「录制中」）', $('#btnRecord').classList.contains('is-rec') && /录制中/.test($('#btnRecordLabel').textContent));
 
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'q', code: 'KeyQ', bubbles: true }));
-    await sleep(60);
-    document.dispatchEvent(new KeyboardEvent('keyup', { key: 'q', code: 'KeyQ', bubbles: true }));
-    await sleep(80);
-    ok('暂停态按 Q 键定点录入音符（0 -> 1 音）', notesCount() === 1, '当前 ' + notesCount());
+    const recDurOf = () => {
+      const m = /时值\\s*(\\d+)ms/.exec(($('#editInfo') || {}).textContent || '');
+      return m ? parseInt(m[1], 10) : -1;
+    };
 
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'q', code: 'KeyQ', bubbles: true }));
+    await sleep(50);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', code: 'ArrowRight', bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', code: 'ArrowRight', bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', code: 'ArrowRight', bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', code: 'ArrowRight', bubbles: true }));
+    await sleep(80);
+    const heldStepDur = recDurOf();
+    ok('暂停态按住 Q 不松并用 → 后移时间戳，未松键时音符已实时拉长（' + heldStepDur + 'ms）', heldStepDur >= 380, $('#editInfo').textContent);
+    document.dispatchEvent(new KeyboardEvent('keyup', { key: 'q', code: 'KeyQ', bubbles: true }));
+    await sleep(60);
+    ok('暂停态录制完成（0 -> 1 音）', notesCount() === 1, '当前 ' + notesCount());
+
+    /* 播放态：按住 W 不松，验证未松键期间音符时值随时间轴推进实时增长 */
     $('#btnPlay').click();
-    await sleep(120);
+    await sleep(80);
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', code: 'KeyW', bubbles: true }));
-    await sleep(160);
+    await sleep(60);
+    const durEarly = recDurOf();
+    await sleep(260);
+    const durWhileHeld = recDurOf();
+    ok('边播放边按住 W 不松，未松键期间音符随时间戳后移实时变长（' + durEarly + 'ms -> ' + durWhileHeld + 'ms）',
+      durWhileHeld > durEarly && durWhileHeld >= 180, durEarly + ' -> ' + durWhileHeld + ' / ' + $('#editInfo').textContent);
     document.dispatchEvent(new KeyboardEvent('keyup', { key: 'w', code: 'KeyW', bubbles: true }));
     await sleep(80);
     $('#btnStop').click();

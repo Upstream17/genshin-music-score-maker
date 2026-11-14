@@ -823,6 +823,88 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
 .fatal-layer p { margin: 0 auto; max-width: 600px; font-size: 12.5px; line-height: 1.9; color: var(--ink-2); }
 .fatal-layer .files { margin-top: 14px; font: 400 11px/1.9 var(--mono); color: var(--ink-3); }
 
+/* 帮助按钮与操作说明弹窗 */
+.btn-help {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  font: 600 12px/1 var(--sans);
+  color: var(--ink-2);
+}
+.btn-help:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.help-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(31, 35, 40, .38);
+  animation: veilIn .15s ease-out both;
+}
+.help-backdrop[hidden] { display: none; }
+.help-card {
+  width: min(560px, 94vw);
+  max-height: 85vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 18px 22px 20px;
+  color: var(--ink);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, .14);
+}
+.help-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--rule);
+}
+.help-title {
+  margin: 0;
+  font: 600 14.5px/1.4 var(--sans);
+  color: var(--ink);
+  letter-spacing: .02em;
+}
+.help-sec {
+  margin-bottom: 14px;
+}
+.help-sec:last-child {
+  margin-bottom: 0;
+}
+.help-sec h4 {
+  margin: 0 0 6px;
+  font: 600 12px/1.4 var(--sans);
+  color: var(--accent);
+  letter-spacing: .03em;
+}
+.help-list {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12px;
+  line-height: 1.75;
+  color: var(--ink-2);
+}
+.help-list li { margin-bottom: 3px; }
+.help-list b { color: var(--ink); font-weight: 600; }
+.help-kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  margin: 0 2px;
+  border: 1px solid var(--rule-2);
+  border-radius: 3px;
+  background: var(--paper-2);
+  font: 500 11px/1.3 var(--mono);
+  color: var(--ink);
+}
+
 /* 响应式 */
 @media (max-width: 1180px) {
   .body { grid-template-columns: 250px minmax(0, 1fr); }
@@ -973,9 +1055,9 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
           <span class="t-total" id="tTotal">0:00.0</span>
         </div>
 
-        <div class="btn-group" title="按当前吸附步长微调播放头时间戳（[ / ] 或小键盘 4 / 6）">
-          <button id="btnStepBack" class="btn btn-xs" type="button" title="时间戳前移一步（[ 或小键盘 4）" disabled>◂</button>
-          <button id="btnStepFwd" class="btn btn-xs" type="button" title="时间戳后移一步（] 或小键盘 6）" disabled>▸</button>
+        <div class="btn-group" title="按当前吸附步长微调播放头时间戳（← / →，按住 Alt 按 10ms 微调）">
+          <button id="btnStepBack" class="btn btn-xs" type="button" title="时间戳前移一步（←）" disabled>◂</button>
+          <button id="btnStepFwd" class="btn btn-xs" type="button" title="时间戳后移一步（→）" disabled>▸</button>
         </div>
 
         <span class="vrule"></span>
@@ -1025,9 +1107,10 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
               <input type="checkbox" id="playKeys" checked>
               <i></i><span>键盘弹奏</span>
             </label>
-            <button id="btnRecord" class="btn btn-xs btn-rec" type="button" title="开启键盘录制：边播放边弹奏实时录入旋律，或暂停时在当前时间戳定点录入">
+            <button id="btnRecord" class="btn btn-xs btn-rec" type="button" title="开启键盘录制：边播放边弹奏实时录入旋律，按住琴键随时间轴后移实时拉长音符">
               <i class="rec-dot"></i><span id="btnRecordLabel">录制</span>
             </button>
+            <button id="btnHelp" class="btn btn-xs btn-help" type="button" title="操作说明与快捷键（?）" aria-label="操作说明与快捷键">?</button>
             <span class="vrule"></span>
             <span id="editInfo" class="edit-info">未选择曲目</span>
           </div>
@@ -1038,11 +1121,11 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
                 <button id="btnTimeLeft" class="btn btn-xs" title="向左平移起始时间（←）" disabled>◂</button>
                 <button id="btnTimeRight" class="btn btn-xs" title="向右平移起始时间（→）" disabled>▸</button>
               </div>
-              <div class="btn-group" title="调整选中音符音高（↓ / ↑ 或小键盘 2 / 8）">
+              <div class="btn-group" title="调整选中音符音高（↓ / ↑）">
                 <button id="btnPitchDown" class="btn btn-xs" title="降一个音级（↓）" disabled>↓</button>
                 <button id="btnPitchUp" class="btn btn-xs" title="升一个音级（↑）" disabled>↑</button>
               </div>
-              <div class="btn-group" title="调整选中音符时值（Shift+← / Shift+→ 或小键盘 - / +）">
+              <div class="btn-group" title="调整选中音符时值（Shift+← / Shift+→）">
                 <button id="btnDurDown" class="btn btn-xs" title="缩短时值（Shift+←）" disabled>−</button>
                 <button id="btnDurUp" class="btn btn-xs" title="加长时值（Shift+→）" disabled>+</button>
               </div>
@@ -1050,7 +1133,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
               <button id="btnDeselect" class="btn btn-xs" title="取消选中（Esc）" hidden>取消</button>
               <span class="vrule"></span>
               <span class="mini-label">吸附</span>
-              <select id="editSnap" class="select select-xs" title="网格吸附与时间戳步进精度">
+              <select id="editSnap" class="select select-xs" title="网格吸附与方向键微调步长">
                 <option value="1">自由(1ms)</option>
                 <option value="10">10ms</option>
                 <option value="20">20ms</option>
@@ -1078,6 +1161,42 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
       </section>
 
     </main>
+  </div>
+
+  <div class="help-backdrop" id="helpModal" hidden>
+    <div class="help-card" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+      <div class="help-head">
+        <h3 id="helpTitle" class="help-title">操作说明与快捷键</h3>
+        <button id="btnHelpClose" class="btn btn-xs" type="button" title="关闭（Esc）">关闭</button>
+      </div>
+      <div class="help-sec">
+        <h4>1. 录制旋律（边播边录 / 按住随时间戳变长）</h4>
+        <ul class="help-list">
+          <li>点击 <b>「● 录制」</b> 开启或关闭录制模式（若未选曲目会自动新建空白曲谱）。</li>
+          <li><b>边播放边录</b>：点击「播放」后按键盘 <span class="help-kbd">Q~U</span> / <span class="help-kbd">A~J</span> / <span class="help-kbd">Z~M</span> 或点击屏幕琴键即可实时录入；<b>按住琴键不松，音符会随时间轴后移实时变长</b>，松开即定格时值。</li>
+          <li><b>暂停态录制</b>：暂停时按住琴键不松并按 <span class="help-kbd">→</span> 后移时间戳，音符同样会随时间戳实时拉长；直接轻按琴键则在当前时间戳落下一个音符。</li>
+        </ul>
+      </div>
+      <div class="help-sec">
+        <h4>2. 方向键微调（时间戳 &amp; 选中音符）</h4>
+        <ul class="help-list">
+          <li><b>未选中音符时（微调当前播放头时间戳）</b>：
+            <br><span class="help-kbd">←</span> / <span class="help-kbd">→</span> 按当前「吸附」步长微调时间戳 · <span class="help-kbd">Alt</span>+<span class="help-kbd">←/→</span> 按 10ms 极细微调 · <span class="help-kbd">Shift</span>+<span class="help-kbd">←/→</span> 前后跳转 1 秒 · <span class="help-kbd">↑</span> / <span class="help-kbd">↓</span> 切换上一首 / 下一首。
+          </li>
+          <li><b>选中音符时（点击画布音符选中，按 <span class="help-kbd">Esc</span> 取消选中）</b>：
+            <br><span class="help-kbd">←</span> / <span class="help-kbd">→</span> 按「吸附」步长平移音符起点 · <span class="help-kbd">Alt</span>+<span class="help-kbd">←/→</span> 按 10ms 微调起点 · <span class="help-kbd">Shift</span>+<span class="help-kbd">←/→</span> 缩短 / 加长音符时值 · <span class="help-kbd">↑</span> / <span class="help-kbd">↓</span> 升降音高 · <span class="help-kbd">Delete</span> 删除 · <span class="help-kbd">Ctrl+Z</span> 撤销。
+          </li>
+        </ul>
+      </div>
+      <div class="help-sec">
+        <h4>3. 画布与歌单操作</h4>
+        <ul class="help-list">
+          <li><b>画布编辑</b>：点击网格空白处新增音符；拖拽音符主体移动时间/音高；拖拽音符右边缘拉伸时值。</li>
+          <li><b>时间轴浏览</b>：点击顶部刻度尺直接跳转进度；滚轮水平移动时间轴；<span class="help-kbd">Ctrl</span>+滚轮缩放时间窗口。</li>
+          <li><b>曲目管理</b>：点击主标题或歌单项右侧 <span class="help-kbd">✎</span> 内联改名；点击 <span class="help-kbd">×</span> 单独删除曲目。</li>
+        </ul>
+      </div>
+    </div>
   </div>
 
   <div class="toast" id="toast" hidden></div>

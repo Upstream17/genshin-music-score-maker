@@ -56,6 +56,7 @@
       'speed', 'speedVal', 'loop', 'autoplay', 'btnPlayMode', 'playModeLabel',
       'tNow', 'tTotal', 'seek', 'seekWrap', 'seekFill', 'seekThumb',
       'keyboard', 'playKeys', 'playHint', 'btnRecord', 'btnRecordLabel',
+      'btnHelp', 'helpModal', 'btnHelpClose',
       'modePlay', 'modeEdit',
       'editBar', 'editInfo', 'btnTimeLeft', 'btnTimeRight', 'btnPitchDown', 'btnPitchUp',
       'btnDurDown', 'btnDurUp', 'btnDel', 'btnDeselect', 'editSnap',
@@ -1038,11 +1039,12 @@
     var snap = getSnapMs();
     for (var k in state.recActiveNotes) {
       var n = state.recActiveNotes[k];
-      if (n && state.playing) {
+      if (n && (state.playing || n._recStretched)) {
         var snappedEnd = Math.round(nowMs / snap) * snap;
         n.end = Math.max(n.start + MIN_NOTE_MS, snappedEnd);
         any = true;
       }
+      if (n) delete n._recStretched;
       delete state.recActiveNotes[k];
     }
     if (any) {
@@ -1050,6 +1052,41 @@
       updateEditBar();
       renderDiag(state.currentEntry, state.current);
     }
+  }
+
+  function syncActiveRecNotes(t) {
+    if (!state.recording || !state.current) return false;
+    var stretched = false;
+    var sc = state.current;
+    for (var rk in state.recActiveNotes) {
+      if (Object.prototype.hasOwnProperty.call(state.recActiveNotes, rk)) {
+        var rn = state.recActiveNotes[rk];
+        if (!rn) continue;
+        if (state.playing || Math.round(t) > rn.start) {
+          var nextEnd = Math.max(rn.start + MIN_NOTE_MS, Math.round(t));
+          rn._recStretched = true;
+          if (nextEnd !== rn.end) {
+            rn.end = nextEnd;
+            stretched = true;
+          }
+        }
+      }
+    }
+    if (stretched) {
+      var maxEnd = sc.stats ? sc.stats.durationMs : 0;
+      for (var i = 0; i < sc.notes.length; i++) {
+        var n = sc.notes[i];
+        var d = n.end - n.start;
+        if (d > state.maxNoteMs) state.maxNoteMs = d;
+        if (n.end > maxEnd) maxEnd = n.end;
+      }
+      if (sc.stats && maxEnd !== sc.stats.durationMs) {
+        sc.stats.durationMs = maxEnd;
+        if (el.tTotal) el.tTotal.textContent = fmtTime(maxEnd);
+      }
+      updateEditBar();
+    }
+    return stretched;
   }
 
   function toggleRecording(forceVal) {
@@ -1062,11 +1099,12 @@
       clearLiveRecordedFlags();
     }
     state.recording = next;
+    if (next) state.edit.selNote = null;
     if (el.btnRecord) el.btnRecord.classList.toggle('is-rec', next);
     if (el.btnRecordLabel) el.btnRecordLabel.textContent = next ? '录制中' : '录制';
     updateEditBar();
     if (next) {
-      toast('已开启录制：播放时按琴键实时录入，暂停时按键在当前时间戳落音', 'ok');
+      toast('已开启录制：按住琴键随时间轴后移实时变长，松开定格', 'ok');
     } else {
       toast('已退出录制模式', 'ok', 1800);
     }
@@ -1079,17 +1117,18 @@
     var rawMs = currentScoreMs();
     var snap = getSnapMs();
     var start = Math.max(0, Math.round(rawMs / snap) * snap);
-    var dur = state.edit.lastDur || DEFAULT_DUR;
+    var initDur = state.playing ? MIN_NOTE_MS : (state.edit.lastDur || DEFAULT_DUR);
     var note = {
       key: k,
       pitch: keyToPitch(k),
       start: start,
-      end: start + dur,
+      end: Math.max(start + initDur, Math.round(rawMs)),
       velocity: 1,
-      _liveRecorded: true
+      _liveRecorded: true,
+      _recStretched: !!state.playing
     };
     state.current.notes.push(note);
-    state.edit.selNote = note;
+    state.edit.selNote = null;
     state.edit.dirty = true;
     state.recActiveNotes[k] = note;
     recomputeDerived();
@@ -1105,16 +1144,17 @@
     var note = state.recActiveNotes[k];
     if (!note) return;
     delete state.recActiveNotes[k];
-    if (state.playing) {
+    if (state.playing || note._recStretched) {
       var snap = getSnapMs();
       var endMs = Math.round(currentScoreMs() / snap) * snap;
       note.end = Math.max(note.start + MIN_NOTE_MS, endMs);
       state.edit.lastDur = note.end - note.start;
-      recomputeDerived();
-      updateEditBar();
-      renderDiag(state.currentEntry, state.current);
-      drawRoll(currentScoreMs());
     }
+    delete note._recStretched;
+    recomputeDerived();
+    updateEditBar();
+    renderDiag(state.currentEntry, state.current);
+    drawRoll(currentScoreMs());
   }
 
   function startPlayback(fromMs) {
@@ -1203,6 +1243,7 @@
     var limitMs = allowBeyond ? maxScrollMs() : Math.max(duration(), (state.current.isNew || state.recording) ? maxScrollMs() : 0);
     ms = clamp(ms, 0, limitMs);
     state.posMs = ms;
+    syncActiveRecNotes(ms);
     if (state.playing) startPlayback(ms);
     else {
       state.cursor = lowerBoundEnd(state.current.notes, ms);
@@ -1877,7 +1918,7 @@
     /* 音符 */
     var notes = state.current.notes;
     var barH = Math.max(2, g.rowH - 2);
-    var start = upperBoundStart(notes, g.t0 - 6000);
+    var start = upperBoundStart(notes, g.t0 - Math.max(6000, state.maxNoteMs || 6000));
     var sel = state.edit.selNote;
 
     for (var i = start; i < notes.length; i++) {
@@ -1951,11 +1992,25 @@
     var total = hasScore ? state.current.notes.length : 0;
     var hasSel = !!(sel && hasScore && state.current.notes.indexOf(sel) >= 0);
 
+    var activeRec = null;
+    if (!hasSel && state.recording) {
+      for (var rk in state.recActiveNotes) {
+        if (Object.prototype.hasOwnProperty.call(state.recActiveNotes, rk) && state.recActiveNotes[rk]) {
+          activeRec = state.recActiveNotes[rk];
+        }
+      }
+    }
+
     if (el.editInfo) {
       if (hasSel) {
         el.editInfo.innerHTML =
           '已选 <b>' + pitchName(sel.pitch) + '</b> · 起点 <b>' + fmtTime(sel.start) +
           '</b> · 时值 <b>' + Math.round(sel.end - sel.start) + 'ms</b>' +
+          ' · 共 ' + total + ' 音';
+      } else if (activeRec) {
+        el.editInfo.innerHTML =
+          '录制 <b>' + pitchName(activeRec.pitch) + '</b> · 起点 <b>' + fmtTime(activeRec.start) +
+          '</b> · 时值 <b>' + Math.round(activeRec.end - activeRec.start) + 'ms</b>' +
           ' · 共 ' + total + ' 音';
       } else if (hasScore) {
         el.editInfo.textContent = '共 ' + total + ' 音 · 刻度尺跳转 · 拖拽音符编辑 · 点击空白加音';
@@ -2151,24 +2206,8 @@
     var t = currentScoreMs();
     if (state.playing) state.posMs = t;
 
-    if (state.playing && state.recording) {
-      var stretched = false;
-      for (var rk in state.recActiveNotes) {
-        if (Object.prototype.hasOwnProperty.call(state.recActiveNotes, rk)) {
-          var rn = state.recActiveNotes[rk];
-          if (rn && rn.note) {
-            var nextEnd = Math.max(rn.note.start + MIN_NOTE_MS, Math.round(t));
-            if (nextEnd !== rn.note.end) {
-              rn.note.end = nextEnd;
-              stretched = true;
-            }
-          }
-        }
-      }
-      if (stretched) {
-        recomputeDerived();
-        updateEditBar();
-      }
+    if (state.recording) {
+      syncActiveRecNotes(t);
     }
 
     var act = shouldShowKeys() ? activeAt(t) : [];
@@ -2411,6 +2450,21 @@
     if (el.btnStepBack) el.btnStepBack.addEventListener('click', function () { stepTimestamp(-getSnapMs()); });
     if (el.btnStepFwd) el.btnStepFwd.addEventListener('click', function () { stepTimestamp(getSnapMs()); });
     if (el.btnRecord) el.btnRecord.addEventListener('click', function () { toggleRecording(); });
+    if (el.btnHelp && el.helpModal) {
+      el.btnHelp.addEventListener('click', function () {
+        el.helpModal.hidden = !el.helpModal.hidden;
+      });
+    }
+    if (el.btnHelpClose && el.helpModal) {
+      el.btnHelpClose.addEventListener('click', function () {
+        el.helpModal.hidden = true;
+      });
+    }
+    if (el.helpModal) {
+      el.helpModal.addEventListener('click', function (ev) {
+        if (ev.target === el.helpModal) el.helpModal.hidden = true;
+      });
+    }
 
     if (el.modePlay) el.modePlay.addEventListener('click', function () { setMode(false); });
     if (el.modeEdit) el.modeEdit.addEventListener('click', function () { setMode(true); });
@@ -2556,6 +2610,21 @@
   function onKeyDown(e) {
     if (isTypingTarget(e.target)) return;
 
+    if (el.helpModal && !el.helpModal.hidden) {
+      if (e.key === 'Escape' || e.key === '?') {
+        e.preventDefault();
+        el.helpModal.hidden = true;
+      }
+      return;
+    }
+    if (e.key === '?' || e.key === 'F1') {
+      if (el.helpModal) {
+        e.preventDefault();
+        el.helpModal.hidden = !el.helpModal.hidden;
+        return;
+      }
+    }
+
     /* 撤销：Ctrl/⌘ + Z（先于「带修饰键直接放行」判断） */
     if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
       e.preventDefault(); undoEdit(); return;
@@ -2575,7 +2644,7 @@
       e.preventDefault(); editDelete(); return;
     }
 
-    if (e.code === 'Space' || e.code === 'Numpad5') { e.preventDefault(); el.btnPlay.click(); return; }
+    if (e.code === 'Space') { e.preventDefault(); el.btnPlay.click(); return; }
     if (e.key === 'Escape') {
       if (state.edit.on && state.edit.selNote) {
         e.preventDefault();
@@ -2588,32 +2657,17 @@
       return;
     }
 
-    /* 小键盘 & [ ] 时间戳步进微调 */
     var snapStep = getSnapMs();
-    if (e.code === 'Numpad4' || e.key === '[' || e.key === '{') {
-      e.preventDefault();
-      stepTimestamp(-(e.shiftKey ? 1000 : snapStep));
-      return;
-    }
-    if (e.code === 'Numpad6' || e.key === ']' || e.key === '}') {
-      e.preventDefault();
-      stepTimestamp(e.shiftKey ? 1000 : snapStep);
-      return;
-    }
-    if (e.code === 'Numpad7') { e.preventDefault(); stepTimestamp(-1000); return; }
-    if (e.code === 'Numpad9') { e.preventDefault(); stepTimestamp(1000); return; }
-    if (e.code === 'Numpad0' || e.key === 'Home') {
+    if (e.key === 'Home') {
       e.preventDefault();
       if (state.current) { seekTo(0, true); updateEditBar(); }
       return;
     }
 
-    /* 编辑模式：选中音符时，上下左右方向键及小键盘 8/2/+/- 专用于微调音符，不切歌！ */
+    /* 编辑模式：选中音符时，上下左右方向键专用于微调音符，不切歌！ */
     if (state.edit.on && state.edit.selNote) {
-      if (e.key === 'ArrowUp' || e.code === 'Numpad8') { e.preventDefault(); editPitch(1); return; }
-      if (e.key === 'ArrowDown' || e.code === 'Numpad2') { e.preventDefault(); editPitch(-1); return; }
-      if (e.code === 'NumpadAdd') { e.preventDefault(); editDurDelta(snapStep); return; }
-      if (e.code === 'NumpadSubtract') { e.preventDefault(); editDurDelta(-snapStep); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); editPitch(1); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); editPitch(-1); return; }
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         if (e.shiftKey) editDurDelta(-snapStep);
@@ -2628,8 +2682,9 @@
       }
     }
 
-    if (e.key === 'ArrowLeft') { e.preventDefault(); stepTimestamp(-(e.shiftKey ? 5000 : snapStep)); return; }
-    if (e.key === 'ArrowRight') { e.preventDefault(); stepTimestamp(e.shiftKey ? 5000 : snapStep); return; }
+    /* 未选中音符时，左右方向键按吸附步长微调当前时间戳（Shift 为 ±1 秒） */
+    if (e.key === 'ArrowLeft') { e.preventDefault(); stepTimestamp(-(e.shiftKey ? 1000 : snapStep)); return; }
+    if (e.key === 'ArrowRight') { e.preventDefault(); stepTimestamp(e.shiftKey ? 1000 : snapStep); return; }
     if (e.key === 'ArrowUp') { e.preventDefault(); jumpTrack(-1, state.playing); return; }
     if (e.key === 'ArrowDown') { e.preventDefault(); jumpTrack(1, state.playing); return; }
 
@@ -2641,7 +2696,7 @@
         state.heldKeys[k] = true;
         if (state.recording) recordNoteStart(k);
         if (!ensureEngine()) return;
-        safeResume().then(function () { noteOn(keyToPitch(k), engNow() + 0.005, 0.45, 0.92); });
+        safeResume().then(function () { noteOn(keyToPitch(k), engNow() + 0.005, state.recording ? 3.5 : 0.6, 0.92); });
       }
     }
   }
