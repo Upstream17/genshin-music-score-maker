@@ -474,7 +474,7 @@ function pageScript(scoreUrls) {
     await sleep(80);
     ok('Ctrl+Z 撤销批量删除恢复 2 个音符', notesCount() === 2, '当前 ' + notesCount());
 
-    /* 在两个音符之间的空白区域（或顶部刻度尺）拖拽选区，点击「✂ 删区间」消除中间空白 */
+    /* 在两个音符之间的顶部时间轴表头拖拽选区，验证按钮变为「✂ 删时间段」并支持直接删除该时间空间 */
     const rulerY = Math.round(rBox.top + 8);
     const gapX0 = Math.round((xN1 + xN2) / 2 - 40);
     const gapX1 = Math.round((xN1 + xN2) / 2 + 40);
@@ -482,13 +482,15 @@ function pageScript(scoreUrls) {
     cv.dispatchEvent(new PointerEvent('pointermove', { button: 0, pointerId: 3, clientX: gapX1, clientY: rulerY, bubbles: true }));
     cv.dispatchEvent(new PointerEvent('pointerup', { button: 0, pointerId: 3, clientX: gapX1, clientY: rulerY, bubbles: true }));
     await sleep(80);
-    ok('顶部刻度尺拖拽选定空白时间区间（' + $('#editInfo').textContent + '）', /选区/.test($('#editInfo').textContent) && !$('#btnRippleCut').disabled, $('#editInfo').textContent);
+    ok('顶部时间轴表头拖拽选中整段时间列，删除按钮自动变为「✂ 删时间段」（' + $('#editInfo').textContent + '）',
+      /已选时间列/.test($('#editInfo').textContent) && !$('#btnDel').disabled && /删时间段/.test($('#btnDel').textContent),
+      $('#editInfo').textContent + ' / btn=' + $('#btnDel').textContent);
 
     const durBeforeCut = $('#tTotal').textContent;
-    $('#btnRippleCut').click();
+    $('#btnDel').click();
     await sleep(100);
     const durAfterCut = $('#tTotal').textContent;
-    ok('点击「✂ 删区间」消除中间空白后后续音符前移、总时长缩短（' + durBeforeCut + ' -> ' + durAfterCut + '）',
+    ok('删除顶部表头选定的时间列后后续音符整体前移、总时长缩短（' + durBeforeCut + ' -> ' + durAfterCut + '）',
       notesCount() === 2 && durAfterCut !== durBeforeCut && durAfterCut < durBeforeCut, durBeforeCut + ' -> ' + durAfterCut);
 
     return out.join('\\n');

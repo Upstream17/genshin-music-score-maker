@@ -1537,7 +1537,7 @@
     var cv = el.roll;
     var W = (cv && cv.clientWidth) || 600;
     var H = (cv && cv.clientHeight) || 160;
-    var GUT = 40, PAD = 6, TOP = 14;
+    var GUT = 40, PAD = 6, TOP = 16;
     var plotW = Math.max(10, W - GUT - PAD);
     var plotH = Math.max(10, H - PAD * 2 - TOP);
     var rowH = plotH / 21;
@@ -1734,8 +1734,12 @@
     var x = ev.clientX - r.left, y = ev.clientY - r.top;
 
     if (!dragSession) {
-      if (y <= g.plotTop || x < g.GUT) {
+      if (x < g.GUT) {
         el.roll.style.cursor = 'pointer';
+        return;
+      }
+      if (y <= g.plotTop) {
+        el.roll.style.cursor = 'col-resize';
         return;
       }
       var hover = hitTestDetailed(g, x, y);
@@ -1767,11 +1771,9 @@
         var tB = Math.max(0, g.timeOf(clamp(x, g.GUT, g.W - g.PAD)));
         var rStart = Math.max(0, Math.round(Math.min(tA, tB) / snapR) * snapR);
         var rEnd = Math.max(rStart + snapR, Math.round(Math.max(tA, tB) / snapR) * snapR);
+        setSelectedNotes([]);
+        state.edit.boxRect = null;
         state.edit.timeRange = { start: rStart, end: rEnd };
-        var inRange = (state.current ? state.current.notes : []).filter(function (n) {
-          return n.end > rStart && n.start < rEnd;
-        });
-        setSelectedNotes(inRange);
         updateEditBar();
         drawRoll(currentScoreMs());
       }
@@ -1793,6 +1795,7 @@
       var bx1 = clamp(Math.max(dragSession.downX, x), g.GUT, g.W - g.PAD);
       var by0 = clamp(Math.min(dragSession.downY, y), g.plotTop, g.plotTop + g.plotH);
       var by1 = clamp(Math.max(dragSession.downY, y), g.plotTop, g.plotTop + g.plotH);
+      state.edit.timeRange = null;
       state.edit.boxRect = { x0: bx0, y0: by0, x1: bx1, y1: by1 };
 
       var tMin = Math.max(0, g.timeOf(bx0));
@@ -1813,15 +1816,6 @@
         }
       }
       setSelectedNotes(matched);
-
-      var snapB = getSnapMs();
-      var tr0 = Math.max(0, Math.round(tMin / snapB) * snapB);
-      var tr1 = Math.max(0, Math.round(tMax / snapB) * snapB);
-      if (tr1 - tr0 >= MIN_NOTE_MS) {
-        state.edit.timeRange = { start: tr0, end: tr1 };
-      } else {
-        state.edit.timeRange = null;
-      }
       updateEditBar();
       drawRoll(currentScoreMs());
       return;
@@ -2264,15 +2258,6 @@
     if (state.edit.timeRange && state.edit.timeRange.end > state.edit.timeRange.start) {
       return { start: state.edit.timeRange.start, end: state.edit.timeRange.end };
     }
-    var list = getSelectedNotes();
-    if (list.length > 0) {
-      var minS = Infinity, maxE = 0;
-      for (var i = 0; i < list.length; i++) {
-        if (list[i].start < minS) minS = list[i].start;
-        if (list[i].end > maxE) maxE = list[i].end;
-      }
-      if (maxE > minS) return { start: minS, end: maxE };
-    }
     return null;
   }
 
@@ -2297,7 +2282,11 @@
     }
 
     if (el.editInfo) {
-      if (selList.length > 1) {
+      if (hasTimeRange) {
+        el.editInfo.innerHTML =
+          '已选时间列 <b>' + fmtTime(tr.start) + ' ~ ' + fmtTime(tr.end) +
+          '</b>（<b>' + Math.round(tr.end - tr.start) + 'ms</b>）· 按 Delete 删除该时间段并前移后续音符 · 共 ' + total + ' 音';
+      } else if (selList.length > 1) {
         var minS = Infinity, maxE = 0;
         for (var i = 0; i < selList.length; i++) {
           if (selList[i].start < minS) minS = selList[i].start;
@@ -2311,17 +2300,13 @@
           '已选 <b>' + pitchName(sel.pitch) + '</b> · 起点 <b>' + fmtTime(sel.start) +
           '</b> · 时值 <b>' + Math.round(sel.end - sel.start) + 'ms</b>' +
           ' · 共 ' + total + ' 音';
-      } else if (hasTimeRange) {
-        el.editInfo.innerHTML =
-          '选区 <b>' + fmtTime(tr.start) + ' ~ ' + fmtTime(tr.end) +
-          '</b>（<b>' + Math.round(tr.end - tr.start) + 'ms</b>）· 点「✂ 删区间」消除空白 · 共 ' + total + ' 音';
       } else if (activeRec) {
         el.editInfo.innerHTML =
           '录制 <b>' + pitchName(activeRec.pitch) + '</b> · 起点 <b>' + fmtTime(activeRec.start) +
           '</b> · 时值 <b>' + Math.round(activeRec.end - activeRec.start) + 'ms</b>' +
           ' · 共 ' + total + ' 音';
       } else if (hasScore) {
-        el.editInfo.textContent = '共 ' + total + ' 音 · 空白拖拽框选 · 刻度尺拖选区间剪辑 · 点击加音';
+        el.editInfo.textContent = '共 ' + total + ' 音 · 画布拖拽框选音符 · 顶部时间轴拖选整列删除 · 点击加音';
       } else {
         el.editInfo.textContent = '未选择曲目 · 共 0 音';
       }
@@ -2337,7 +2322,17 @@
     if (el.btnPitchUp) el.btnPitchUp.disabled = !hasSel;
     if (el.btnDurDown) el.btnDurDown.disabled = !hasSel;
     if (el.btnDurUp) el.btnDurUp.disabled = !hasSel;
-    if (el.btnDel) el.btnDel.disabled = !hasSel;
+    if (el.btnDel) {
+      if (hasTimeRange) {
+        el.btnDel.disabled = !hasScore;
+        el.btnDel.textContent = '✂ 删时间段';
+        el.btnDel.title = '删除选定时间段并将后续音符整体前移（Delete）';
+      } else {
+        el.btnDel.disabled = !hasSel;
+        el.btnDel.textContent = '删除';
+        el.btnDel.title = '删除选中音符（Delete）';
+      }
+    }
     if (el.btnRippleCut) el.btnRippleCut.disabled = !(hasScore && activeRange);
     if (el.btnInsertGap) el.btnInsertGap.disabled = !hasScore;
     if (el.btnDeselect) {
@@ -2452,6 +2447,10 @@
   }
 
   function editDelete() {
+    if (state.edit.timeRange && state.edit.timeRange.end > state.edit.timeRange.start) {
+      rippleDeleteRange();
+      return;
+    }
     var list = requireSelNotes(); if (!list) return;
     pushUndo();
     state.current.notes = state.current.notes.filter(function (n) {
@@ -2548,6 +2547,8 @@
 
   function selectAllNotes() {
     if (!state.current || !state.current.notes.length) return;
+    state.edit.timeRange = null;
+    state.edit.boxRect = null;
     setSelectedNotes(state.current.notes.slice());
     updateEditBar();
     drawRoll(currentScoreMs());
@@ -3072,14 +3073,10 @@
     }
     if (e.ctrlKey || e.altKey || e.metaKey) return;
 
-    /* 编辑模式：Shift+Delete 波纹剪除时间段；Delete 批量删选中音符 */
+    /* 编辑模式：Delete / Backspace 自动按当前选中态执行（选音符 -> 删音符；选表头时间列 -> 删时间段并前移） */
     if (state.edit.on && (e.key === 'Delete' || e.key === 'Backspace')) {
       e.preventDefault();
-      if (e.shiftKey || (getSelectedNotes().length === 0 && state.edit.timeRange)) {
-        rippleDeleteRange();
-      } else {
-        editDelete();
-      }
+      editDelete();
       return;
     }
 
