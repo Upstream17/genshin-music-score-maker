@@ -421,6 +421,76 @@ function pageScript(scoreUrls) {
     await sleep(60);
     ok('关闭录制模式恢复常态', !$('#btnRecord').classList.contains('is-rec'));
 
+    /* ───────── 12. 拖拽修改 Ctrl+Z 撤销 + 批量框选与批量操作 + 时间段剪辑（删空白前移 / 插空白后移） ───────── */
+    $('#btnNewScore').click();
+    await sleep(120);
+    const rBox = cv.getBoundingClientRect();
+    const xN1 = Math.round(rBox.left + 38 + (rBox.width - 50) * 0.35);
+    const yN1 = Math.round(rBox.top + rBox.height * 0.55);
+    const xN2 = Math.round(rBox.left + 38 + (rBox.width - 50) * 0.72);
+    const yN2 = Math.round(rBox.top + rBox.height * 0.45);
+
+    /* 落第一个音符并测试鼠标拖拽移动后 Ctrl+Z 能否恢复原始起点 */
+    cv.dispatchEvent(new MouseEvent('click', { clientX: xN1, clientY: yN1, bubbles: true }));
+    await sleep(80);
+    const origInfo1 = $('#editInfo').textContent;
+    cv.dispatchEvent(new PointerEvent('pointerdown', { button: 0, pointerId: 1, clientX: xN1 + 2, clientY: yN1, bubbles: true }));
+    cv.dispatchEvent(new PointerEvent('pointermove', { button: 0, pointerId: 1, clientX: xN1 + 90, clientY: yN1 - 18, bubbles: true }));
+    cv.dispatchEvent(new PointerEvent('pointerup', { button: 0, pointerId: 1, clientX: xN1 + 90, clientY: yN1 - 18, bubbles: true }));
+    await sleep(80);
+    const draggedInfo1 = $('#editInfo').textContent;
+    ok('拖拽音符后起点/音高已改变（' + origInfo1 + ' -> ' + draggedInfo1 + '）', draggedInfo1 !== origInfo1, draggedInfo1);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', code: 'KeyZ', ctrlKey: true, bubbles: true }));
+    await sleep(80);
+    cv.dispatchEvent(new MouseEvent('click', { clientX: xN1, clientY: yN1, bubbles: true }));
+    await sleep(60);
+    const restoredInfo1 = $('#editInfo').textContent;
+    ok('拖拽修改后按 Ctrl+Z 成功恢复到拖拽前原始状态（' + restoredInfo1 + '）', restoredInfo1 === origInfo1,
+      restoredInfo1 + ' vs ' + origInfo1);
+
+    /* 在较远时间点落第二个音符，制造中间空白并测试矩形框选 */
+    cv.dispatchEvent(new MouseEvent('click', { clientX: xN2, clientY: yN2, bubbles: true }));
+    await sleep(80);
+    const note2BeforeCut = $('#editInfo').textContent;
+    ok('落第二个音符（共 2 音）', notesCount() === 2, note2BeforeCut);
+
+    /* 在画布空白处按住左键拖拽框选两个音符 */
+    const bxStart = Math.round(rBox.left + 44);
+    const byStart = Math.round(rBox.top + 24);
+    const bxEnd = Math.round(rBox.right - 16);
+    const byEnd = Math.round(rBox.bottom - 8);
+    cv.dispatchEvent(new PointerEvent('pointerdown', { button: 0, pointerId: 2, clientX: bxStart, clientY: byStart, bubbles: true }));
+    cv.dispatchEvent(new PointerEvent('pointermove', { button: 0, pointerId: 2, clientX: bxEnd, clientY: byEnd, bubbles: true }));
+    cv.dispatchEvent(new PointerEvent('pointerup', { button: 0, pointerId: 2, clientX: bxEnd, clientY: byEnd, bubbles: true }));
+    await sleep(80);
+    ok('矩形框选成功选中 2 个音符（' + $('#editInfo').textContent + '）', /已选\\s*2\\s*音/.test($('#editInfo').textContent), $('#editInfo').textContent);
+
+    /* 批量删除再 Ctrl+Z 撤销恢复 */
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    await sleep(80);
+    ok('批量删除框选的 2 个音符（2 -> 0 音）', notesCount() === 0, '当前 ' + notesCount());
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', code: 'KeyZ', ctrlKey: true, bubbles: true }));
+    await sleep(80);
+    ok('Ctrl+Z 撤销批量删除恢复 2 个音符', notesCount() === 2, '当前 ' + notesCount());
+
+    /* 在两个音符之间的空白区域（或顶部刻度尺）拖拽选区，点击「✂ 删区间」消除中间空白 */
+    const rulerY = Math.round(rBox.top + 8);
+    const gapX0 = Math.round((xN1 + xN2) / 2 - 40);
+    const gapX1 = Math.round((xN1 + xN2) / 2 + 40);
+    cv.dispatchEvent(new PointerEvent('pointerdown', { button: 0, pointerId: 3, clientX: gapX0, clientY: rulerY, bubbles: true }));
+    cv.dispatchEvent(new PointerEvent('pointermove', { button: 0, pointerId: 3, clientX: gapX1, clientY: rulerY, bubbles: true }));
+    cv.dispatchEvent(new PointerEvent('pointerup', { button: 0, pointerId: 3, clientX: gapX1, clientY: rulerY, bubbles: true }));
+    await sleep(80);
+    ok('顶部刻度尺拖拽选定空白时间区间（' + $('#editInfo').textContent + '）', /选区/.test($('#editInfo').textContent) && !$('#btnRippleCut').disabled, $('#editInfo').textContent);
+
+    const durBeforeCut = $('#tTotal').textContent;
+    $('#btnRippleCut').click();
+    await sleep(100);
+    const durAfterCut = $('#tTotal').textContent;
+    ok('点击「✂ 删区间」消除中间空白后后续音符前移、总时长缩短（' + durBeforeCut + ' -> ' + durAfterCut + '）',
+      notesCount() === 2 && durAfterCut !== durBeforeCut && durAfterCut < durBeforeCut, durBeforeCut + ' -> ' + durAfterCut);
+
     return out.join('\\n');
   } catch (e) {
     out.push('FATAL  ' + (e && e.stack ? e.stack : e));

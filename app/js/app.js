@@ -59,7 +59,7 @@
       'btnHelp', 'helpModal', 'btnHelpClose',
       'modePlay', 'modeEdit',
       'editBar', 'editInfo', 'btnTimeLeft', 'btnTimeRight', 'btnPitchDown', 'btnPitchUp',
-      'btnDurDown', 'btnDurUp', 'btnDel', 'btnDeselect', 'editSnap',
+      'btnDurDown', 'btnDurUp', 'btnDel', 'btnRippleCut', 'btnInsertGap', 'btnDeselect', 'editSnap',
       'btnEditUndo', 'btnEditReset', 'btnEditExport',
       'roll', 'rollHint', 'zoom', 'zoomVal', 'btnFitAll',
       'instrument', 'volume', 'btnLoadSamples', 'sampleInput', 'sampleStat',
@@ -111,6 +111,9 @@
     edit: {
       on: true,
       selNote: null,
+      selNotes: [],
+      timeRange: null,
+      boxRect: null,
       undo: [],
       dirty: false
     }
@@ -147,6 +150,48 @@
     if (i < 0) return pitch;
     var j = clamp(i + dir, 0, 20);
     return keyToPitch(LABELS[j]);
+  }
+
+  function getSelectedNotes() {
+    if (!state.current || !state.current.notes) {
+      state.edit.selNotes = [];
+      state.edit.selNote = null;
+      return [];
+    }
+    var notes = state.current.notes;
+    var list = (state.edit.selNotes && state.edit.selNotes.length)
+      ? state.edit.selNotes.filter(function (n) { return notes.indexOf(n) >= 0; })
+      : (state.edit.selNote && notes.indexOf(state.edit.selNote) >= 0 ? [state.edit.selNote] : []);
+    state.edit.selNotes = list;
+    state.edit.selNote = list.length ? list[list.length - 1] : null;
+    return list;
+  }
+
+  function setSelectedNotes(arr) {
+    var list = [];
+    if (arr && arr.length && state.current && state.current.notes) {
+      for (var i = 0; i < arr.length; i++) {
+        var n = arr[i];
+        if (n && list.indexOf(n) < 0 && state.current.notes.indexOf(n) >= 0) {
+          list.push(n);
+        }
+      }
+    }
+    state.edit.selNotes = list;
+    state.edit.selNote = list.length ? list[list.length - 1] : null;
+  }
+
+  function clearSelection() {
+    state.edit.selNotes = [];
+    state.edit.selNote = null;
+    state.edit.timeRange = null;
+    state.edit.boxRect = null;
+  }
+
+  function isNoteSelected(n) {
+    if (!n) return false;
+    if (state.edit.selNote === n) return true;
+    return !!(state.edit.selNotes && state.edit.selNotes.indexOf(n) >= 0);
   }
 
   function fmtTime(ms) {
@@ -703,6 +748,7 @@
     state.current = null;
     state.currentEntry = null;
     state.sourceJson = null;
+    clearSelection();
     stopPlayback();
     el.npTitle.textContent = '未选择曲目';
     updateNpTitleEditable(false);
@@ -880,7 +926,7 @@
     state.sourceJson = null;
     state.maxNoteMs = 1;
     state.posMs = 0;
-    state.edit.selNote = null;
+    clearSelection();
     state.edit.undo = [];
     state.edit.dirty = false;
 
@@ -1542,7 +1588,13 @@
     window.addEventListener('resize', function () { drawRoll(currentScoreMs()); });
   }
 
+  function markDragHandled() {
+    justHandledDrag = true;
+    setTimeout(function () { justHandledDrag = false; }, 0);
+  }
+
   function onRollPointerDown(ev) {
+    justHandledDrag = false;
     if (ev.button !== 0 && ev.button !== 1 && ev.button !== 2) return;
     var r = el.roll.getBoundingClientRect();
     var g = rollGeom();
@@ -1553,11 +1605,11 @@
       var rRow0 = rowAtY(g, y);
       if (rRow0 >= 0 && rRow0 <= 20) auditionKey(LABELS[rRow0]);
       if (state.current) {
-        state.edit.selNote = null;
+        clearSelection();
         updateEditBar();
         drawRoll(currentScoreMs());
       }
-      justHandledDrag = true;
+      markDragHandled();
       return;
     }
 
@@ -1585,19 +1637,17 @@
 
     if (ev.button !== 0) return;
 
-    // 顶部时间刻度尺区域：点击立即跳转进度，拖拽平移时间轴
+    // 顶部时间刻度尺区域：轻点跳转播放头，横向拖拽拉出时间选区供剪辑
     if (y <= g.plotTop && x >= g.GUT) {
-      state.edit.selNote = null;
-      seekTo(g.timeOf(x), true);
-      updateEditBar();
-      drawRoll(currentScoreMs());
       dragSession = {
-        type: 'pan',
+        type: 'ruler',
         pointerId: ev.pointerId,
         startX: ev.clientX,
-        startPosMs: currentScoreMs()
+        downX: x,
+        downTime: Math.max(0, g.timeOf(x)),
+        moved: false
       };
-      justHandledDrag = true;
+      markDragHandled();
       try { el.roll.setPointerCapture(ev.pointerId); } catch (_) {}
       return;
     }
@@ -1605,28 +1655,63 @@
     var hit = hitTestDetailed(g, x, y);
     if (hit) {
       var note = hit.note;
-      state.edit.selNote = note;
+      state.edit.timeRange = null;
+      state.edit.boxRect = null;
+
+      if (ev.shiftKey) {
+        var curList = getSelectedNotes().slice();
+        var exIdx = curList.indexOf(note);
+        if (exIdx >= 0) curList.splice(exIdx, 1);
+        else curList.push(note);
+        setSelectedNotes(curList);
+        auditionNote(note);
+        updateEditBar();
+        drawRoll(currentScoreMs());
+        markDragHandled();
+        return;
+      }
+
+      var alreadyInBatch = isNoteSelected(note) && getSelectedNotes().length > 1;
+      if (!alreadyInBatch) {
+        setSelectedNotes([note]);
+      } else {
+        state.edit.selNote = note;
+      }
       auditionNote(note);
       updateEditBar();
       drawRoll(currentScoreMs());
 
+      var activeList = getSelectedNotes();
       dragSession = {
         type: hit.isEdge ? 'resize' : 'move',
         pointerId: ev.pointerId,
         note: note,
+        narrowOnClick: alreadyInBatch,
+        preSnap: snapshotNotes(),
+        items: activeList.map(function (n) {
+          return {
+            note: n,
+            origStart: n.start,
+            origEnd: n.end,
+            origPitch: n.pitch,
+            origKey: n.key,
+            origRow: LABELS.indexOf(n.key)
+          };
+        }),
         startX: ev.clientX,
         startY: ev.clientY,
         origStart: note.start,
         origEnd: note.end,
         origPitch: note.pitch,
         origKey: note.key,
+        origRow: LABELS.indexOf(note.key),
         changed: false
       };
       try { el.roll.setPointerCapture(ev.pointerId); } catch (_) {}
     } else if (state.playing) {
       // 播放中点击空白处：跳转播放时刻，避免误加音符
       seekTo(g.timeOf(x));
-      justHandledDrag = true;
+      markDragHandled();
     } else {
       dragSession = {
         type: 'empty',
@@ -1637,6 +1722,7 @@
         downY: y,
         downTime: g.timeOf(x),
         downRow: rowAtY(g, y),
+        baseSelected: ev.shiftKey ? getSelectedNotes().slice() : [],
         moved: false
       };
     }
@@ -1662,7 +1748,7 @@
     }
 
     var dx = ev.clientX - dragSession.startX;
-    var dy = ev.clientY - dragSession.startY;
+    var dy = ev.clientY - (dragSession.startY || 0);
 
     if (dragSession.type === 'pan') {
       var dt = (dx / g.plotW) * (g.t1 - g.t0);
@@ -1671,13 +1757,73 @@
       return;
     }
 
-    if (dragSession.type === 'empty') {
-      if (!dragSession.moved && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+    if (dragSession.type === 'ruler') {
+      if (!dragSession.moved && Math.abs(dx) > 4) {
         dragSession.moved = true;
-        dragSession.type = 'pan';
-        dragSession.startPosMs = currentScoreMs();
-        try { el.roll.setPointerCapture(ev.pointerId); } catch (_) {}
       }
+      if (dragSession.moved) {
+        var snapR = getSnapMs();
+        var tA = Math.max(0, g.timeOf(dragSession.downX));
+        var tB = Math.max(0, g.timeOf(clamp(x, g.GUT, g.W - g.PAD)));
+        var rStart = Math.max(0, Math.round(Math.min(tA, tB) / snapR) * snapR);
+        var rEnd = Math.max(rStart + snapR, Math.round(Math.max(tA, tB) / snapR) * snapR);
+        state.edit.timeRange = { start: rStart, end: rEnd };
+        var inRange = (state.current ? state.current.notes : []).filter(function (n) {
+          return n.end > rStart && n.start < rEnd;
+        });
+        setSelectedNotes(inRange);
+        updateEditBar();
+        drawRoll(currentScoreMs());
+      }
+      return;
+    }
+
+    if (dragSession.type === 'empty') {
+      if (!dragSession.moved && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+        dragSession.moved = true;
+        dragSession.type = 'box';
+        try { el.roll.setPointerCapture(ev.pointerId); } catch (_) {}
+      } else {
+        return;
+      }
+    }
+
+    if (dragSession.type === 'box') {
+      var bx0 = clamp(Math.min(dragSession.downX, x), g.GUT, g.W - g.PAD);
+      var bx1 = clamp(Math.max(dragSession.downX, x), g.GUT, g.W - g.PAD);
+      var by0 = clamp(Math.min(dragSession.downY, y), g.plotTop, g.plotTop + g.plotH);
+      var by1 = clamp(Math.max(dragSession.downY, y), g.plotTop, g.plotTop + g.plotH);
+      state.edit.boxRect = { x0: bx0, y0: by0, x1: bx1, y1: by1 };
+
+      var tMin = Math.max(0, g.timeOf(bx0));
+      var tMax = Math.max(tMin, g.timeOf(bx1));
+      var rowHigh = rowAtY(g, by0);
+      var rowLow = rowAtY(g, by1);
+      var rMin = Math.min(rowLow, rowHigh);
+      var rMax = Math.max(rowLow, rowHigh);
+
+      var matched = dragSession.baseSelected ? dragSession.baseSelected.slice() : [];
+      var allNotes = state.current ? state.current.notes : [];
+      for (var bi = 0; bi < allNotes.length; bi++) {
+        var bn = allNotes[bi];
+        if (bn.end < tMin || bn.start > tMax) continue;
+        var br = LABELS.indexOf(bn.key);
+        if (br >= rMin && br <= rMax && matched.indexOf(bn) < 0) {
+          matched.push(bn);
+        }
+      }
+      setSelectedNotes(matched);
+
+      var snapB = getSnapMs();
+      var tr0 = Math.max(0, Math.round(tMin / snapB) * snapB);
+      var tr1 = Math.max(0, Math.round(tMax / snapB) * snapB);
+      if (tr1 - tr0 >= MIN_NOTE_MS) {
+        state.edit.timeRange = { start: tr0, end: tr1 };
+      } else {
+        state.edit.timeRange = null;
+      }
+      updateEditBar();
+      drawRoll(currentScoreMs());
       return;
     }
 
@@ -1685,8 +1831,18 @@
       var snap = getSnapMs();
       var dtMs = (dx / g.plotW) * (g.t1 - g.t0);
       var newEnd = Math.max(dragSession.origStart + MIN_NOTE_MS, Math.round((dragSession.origEnd + dtMs) / snap) * snap);
-      if (newEnd !== dragSession.note.end) {
-        dragSession.note.end = newEnd;
+      var dDur = newEnd - dragSession.origEnd;
+      var itemsR = dragSession.items || [{ note: dragSession.note, origStart: dragSession.origStart, origEnd: dragSession.origEnd }];
+      var anyResized = false;
+      for (var ri = 0; ri < itemsR.length; ri++) {
+        var itR = itemsR[ri];
+        var targetEnd = Math.max(itR.origStart + MIN_NOTE_MS, itR.origEnd + dDur);
+        if (targetEnd !== itR.note.end) {
+          itR.note.end = targetEnd;
+          anyResized = true;
+        }
+      }
+      if (anyResized) {
         dragSession.changed = true;
         updateEditBar();
         drawRoll(currentScoreMs());
@@ -1697,22 +1853,53 @@
     if (dragSession.type === 'move') {
       var snap2 = getSnapMs();
       var dtMs2 = (dx / g.plotW) * (g.t1 - g.t0);
-      var dur = dragSession.origEnd - dragSession.origStart;
-      var newStart = Math.max(0, Math.round((dragSession.origStart + dtMs2) / snap2) * snap2);
+      var targetAnchorStart = Math.max(0, Math.round((dragSession.origStart + dtMs2) / snap2) * snap2);
+      var actualDt = targetAnchorStart - dragSession.origStart;
+
+      var itemsM = dragSession.items || [{
+        note: dragSession.note,
+        origStart: dragSession.origStart,
+        origEnd: dragSession.origEnd,
+        origPitch: dragSession.origPitch,
+        origKey: dragSession.origKey,
+        origRow: dragSession.origRow
+      }];
+
+      var minOrigStart = Infinity;
+      var minOrigRow = 20, maxOrigRow = 0;
+      for (var mi = 0; mi < itemsM.length; mi++) {
+        if (itemsM[mi].origStart < minOrigStart) minOrigStart = itemsM[mi].origStart;
+        if (itemsM[mi].origRow < minOrigRow) minOrigRow = itemsM[mi].origRow;
+        if (itemsM[mi].origRow > maxOrigRow) maxOrigRow = itemsM[mi].origRow;
+      }
+      if (minOrigStart + actualDt < 0) actualDt = -minOrigStart;
+
       var newRow = rowAtY(g, y);
-      var newKey = LABELS[newRow];
-      var newPitch = keyToPitch(newKey);
+      var dRow = newRow - dragSession.origRow;
+      dRow = clamp(dRow, -minOrigRow, 20 - maxOrigRow);
 
       var didChange = false;
-      if (newStart !== dragSession.note.start) {
-        dragSession.note.start = newStart;
-        dragSession.note.end = newStart + dur;
-        didChange = true;
+      var pitchChanged = false;
+      for (var mj = 0; mj < itemsM.length; mj++) {
+        var itM = itemsM[mj];
+        var nextS = itM.origStart + actualDt;
+        var nextE = itM.origEnd + actualDt;
+        var nextR = clamp(itM.origRow + dRow, 0, 20);
+        var nextK = LABELS[nextR];
+        var nextP = keyToPitch(nextK);
+        if (nextS !== itM.note.start || nextE !== itM.note.end) {
+          itM.note.start = nextS;
+          itM.note.end = nextE;
+          didChange = true;
+        }
+        if (nextP !== itM.note.pitch) {
+          itM.note.pitch = nextP;
+          itM.note.key = nextK;
+          didChange = true;
+          pitchChanged = true;
+        }
       }
-      if (newPitch !== dragSession.note.pitch) {
-        dragSession.note.pitch = newPitch;
-        dragSession.note.key = newKey;
-        didChange = true;
+      if (pitchChanged) {
         auditionNote(dragSession.note, true);
       }
       if (didChange) {
@@ -1732,18 +1919,43 @@
     }
 
     if (sess.type === 'pan') {
-      justHandledDrag = true;
+      markDragHandled();
+      return;
+    }
+
+    if (sess.type === 'ruler') {
+      if (!sess.moved) {
+        clearSelection();
+        seekTo(sess.downTime, true);
+        updateEditBar();
+        drawRoll(currentScoreMs());
+      }
+      markDragHandled();
+      return;
+    }
+
+    if (sess.type === 'box') {
+      state.edit.boxRect = null;
+      markDragHandled();
+      updateEditBar();
+      drawRoll(currentScoreMs());
       return;
     }
 
     if (sess.type === 'move' || sess.type === 'resize') {
       if (sess.changed) {
-        pushUndo();
+        pushUndo(sess.preSnap);
         state.edit.dirty = true;
         recomputeDerived();
+        updateEditBar();
         renderDiag(state.currentEntry, state.current);
         auditionNote(sess.note);
-        justHandledDrag = true;
+        markDragHandled();
+      } else if (sess.narrowOnClick && sess.note) {
+        setSelectedNotes([sess.note]);
+        updateEditBar();
+        drawRoll(currentScoreMs());
+        markDragHandled();
       }
       return;
     }
@@ -1769,9 +1981,11 @@
   /* 无模式点击：刻度尺已在 pointerdown 跳转；命中音符 -> 选中；空白网格 -> 新增 */
   function handleRollEdit(g, x, y) {
     if (y <= g.plotTop || x < g.GUT) return;
+    state.edit.timeRange = null;
+    state.edit.boxRect = null;
     var hit = hitTest(g, x, y);
     if (hit) {
-      state.edit.selNote = hit;
+      setSelectedNotes([hit]);
       auditionNote(hit);
     } else {
       var row = rowAtY(g, y);
@@ -1784,7 +1998,7 @@
         var dur = state.edit.lastDur || DEFAULT_DUR;
         var note = { key: key, pitch: keyToPitch(key), start: start, end: start + dur, velocity: 1 };
         state.current.notes.push(note);
-        state.edit.selNote = note;
+        setSelectedNotes([note]);
         state.edit.dirty = true;
         state.edit.lastDur = dur;
         auditionNote(note);
@@ -1931,6 +2145,22 @@
       }
     }
 
+    /* 时间选区高亮（刻度尺拖拽或空白框选产生） */
+    var tr = state.edit.timeRange;
+    if (tr && tr.end > tr.start) {
+      var rx0 = clamp(g.xOf(tr.start), g.GUT, W - g.PAD);
+      var rx1 = clamp(g.xOf(tr.end), g.GUT, W - g.PAD);
+      if (rx1 > rx0) {
+        ctx.fillStyle = 'rgba(47, 107, 88, 0.07)';
+        ctx.fillRect(rx0, g.plotTop, rx1 - rx0, g.plotH);
+        ctx.fillStyle = 'rgba(47, 107, 88, 0.18)';
+        ctx.fillRect(rx0, 0, rx1 - rx0, g.plotTop);
+        ctx.fillStyle = '#2f6b58';
+        ctx.fillRect(rx0, 0, 1, H);
+        ctx.fillRect(rx1 - 1, 0, 1, H);
+      }
+    }
+
     /* 播放头 */
     var hx = g.GUT + g.plotW * 0.25;
     ctx.fillStyle = '#2f6b58';
@@ -1940,7 +2170,6 @@
     var notes = state.current.notes;
     var barH = Math.max(2, g.rowH - 2);
     var start = upperBoundStart(notes, g.t0 - Math.max(6000, state.maxNoteMs || 6000));
-    var sel = state.edit.selNote;
 
     for (var i = start; i < notes.length; i++) {
       var n = notes[i];
@@ -1962,13 +2191,28 @@
         : (n.pitch < 60 ? '#c3d3cb' : (n.pitch < 72 ? '#a9c2b6' : '#8fae9f'));
       rr(ctx, x0, yy + 1, x1 - x0, barH, 2);
 
-      if (n === sel) {
+      if (isNoteSelected(n)) {
         ctx.strokeStyle = '#22252b';
         ctx.lineWidth = 1.5;
         ctx.strokeRect(x0 - 1.5, yy + 0.5, x1 - x0 + 3, barH + 1);
         ctx.fillStyle = '#22252b';
         ctx.fillRect(x1 - 1, yy + 1, 2, barH);
       }
+    }
+
+    /* 矩形框选虚线框 */
+    var br = state.edit.boxRect;
+    if (br && (br.x1 > br.x0 || br.y1 > br.y0)) {
+      var bw = Math.max(1, br.x1 - br.x0);
+      var bh = Math.max(1, br.y1 - br.y0);
+      ctx.fillStyle = 'rgba(47, 107, 88, 0.12)';
+      ctx.fillRect(br.x0, br.y0, bw, bh);
+      ctx.save();
+      ctx.strokeStyle = '#2f6b58';
+      ctx.lineWidth = 1;
+      if (typeof ctx.setLineDash === 'function') ctx.setLineDash([4, 3]);
+      ctx.strokeRect(br.x0 + 0.5, br.y0 + 0.5, bw, bh);
+      ctx.restore();
     }
 
     /* 播放头顶部小三角 */
@@ -1983,11 +2227,18 @@
 
   /* ═══════════════════ 编辑 ═══════════════════ */
 
-  function pushUndo() {
-    if (!state.current) return;
-    state.edit.undo.push(state.current.notes.map(function (n) {
+  function snapshotNotes() {
+    if (!state.current) return null;
+    return state.current.notes.map(function (n) {
       return { key: n.key, pitch: n.pitch, start: n.start, end: n.end, velocity: n.velocity };
-    }));
+    });
+  }
+
+  function pushUndo(customSnap) {
+    if (!state.current) return;
+    var snap = customSnap || snapshotNotes();
+    if (!snap) return;
+    state.edit.undo.push(snap);
     if (state.edit.undo.length > 60) state.edit.undo.shift();
   }
 
@@ -1995,7 +2246,7 @@
     if (!state.current || !state.edit.undo.length) { toast('没有可撤销的操作'); return; }
     var snap = state.edit.undo.pop();
     state.current.notes = snap;
-    state.edit.selNote = null;
+    clearSelection();
     state.edit.dirty = true;
     recomputeDerived();
     updateEditBar();
@@ -2009,12 +2260,32 @@
     toast('已还原为初始状态', 'ok');
   }
 
+  function getActiveTimeRange() {
+    if (state.edit.timeRange && state.edit.timeRange.end > state.edit.timeRange.start) {
+      return { start: state.edit.timeRange.start, end: state.edit.timeRange.end };
+    }
+    var list = getSelectedNotes();
+    if (list.length > 0) {
+      var minS = Infinity, maxE = 0;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].start < minS) minS = list[i].start;
+        if (list[i].end > maxE) maxE = list[i].end;
+      }
+      if (maxE > minS) return { start: minS, end: maxE };
+    }
+    return null;
+  }
+
   function updateEditBar() {
     if (el.editBar) el.editBar.hidden = false;
+    var selList = getSelectedNotes();
     var sel = state.edit.selNote;
     var hasScore = !!state.current;
     var total = hasScore ? state.current.notes.length : 0;
-    var hasSel = !!(sel && hasScore && state.current.notes.indexOf(sel) >= 0);
+    var hasSel = selList.length > 0;
+    var tr = state.edit.timeRange;
+    var hasTimeRange = !!(tr && tr.end > tr.start);
+    var activeRange = getActiveTimeRange();
 
     var activeRec = null;
     if (!hasSel && state.recording) {
@@ -2026,18 +2297,31 @@
     }
 
     if (el.editInfo) {
-      if (hasSel) {
+      if (selList.length > 1) {
+        var minS = Infinity, maxE = 0;
+        for (var i = 0; i < selList.length; i++) {
+          if (selList[i].start < minS) minS = selList[i].start;
+          if (selList[i].end > maxE) maxE = selList[i].end;
+        }
+        el.editInfo.innerHTML =
+          '已选 <b>' + selList.length + ' 音</b> · 区间 <b>' + fmtTime(minS) + ' ~ ' + fmtTime(maxE) +
+          '</b> · 共 ' + total + ' 音';
+      } else if (hasSel && sel) {
         el.editInfo.innerHTML =
           '已选 <b>' + pitchName(sel.pitch) + '</b> · 起点 <b>' + fmtTime(sel.start) +
           '</b> · 时值 <b>' + Math.round(sel.end - sel.start) + 'ms</b>' +
           ' · 共 ' + total + ' 音';
+      } else if (hasTimeRange) {
+        el.editInfo.innerHTML =
+          '选区 <b>' + fmtTime(tr.start) + ' ~ ' + fmtTime(tr.end) +
+          '</b>（<b>' + Math.round(tr.end - tr.start) + 'ms</b>）· 点「✂ 删区间」消除空白 · 共 ' + total + ' 音';
       } else if (activeRec) {
         el.editInfo.innerHTML =
           '录制 <b>' + pitchName(activeRec.pitch) + '</b> · 起点 <b>' + fmtTime(activeRec.start) +
           '</b> · 时值 <b>' + Math.round(activeRec.end - activeRec.start) + 'ms</b>' +
           ' · 共 ' + total + ' 音';
       } else if (hasScore) {
-        el.editInfo.textContent = '共 ' + total + ' 音 · 刻度尺跳转 · 拖拽音符编辑 · 点击空白加音';
+        el.editInfo.textContent = '共 ' + total + ' 音 · 空白拖拽框选 · 刻度尺拖选区间剪辑 · 点击加音';
       } else {
         el.editInfo.textContent = '未选择曲目 · 共 0 音';
       }
@@ -2054,9 +2338,12 @@
     if (el.btnDurDown) el.btnDurDown.disabled = !hasSel;
     if (el.btnDurUp) el.btnDurUp.disabled = !hasSel;
     if (el.btnDel) el.btnDel.disabled = !hasSel;
+    if (el.btnRippleCut) el.btnRippleCut.disabled = !(hasScore && activeRange);
+    if (el.btnInsertGap) el.btnInsertGap.disabled = !hasScore;
     if (el.btnDeselect) {
-      el.btnDeselect.disabled = !hasSel;
-      el.btnDeselect.hidden = !hasSel;
+      var canDesel = hasSel || hasTimeRange;
+      el.btnDeselect.disabled = !canDesel;
+      el.btnDeselect.hidden = !canDesel;
     }
   }
 
@@ -2074,80 +2361,197 @@
     return 50;
   }
 
-  function requireSel() {
-    var sel = state.edit.selNote;
-    if (!sel || !state.current || state.current.notes.indexOf(sel) < 0) {
-      toast('先点一个音符');
+  function requireSelNotes() {
+    var list = getSelectedNotes();
+    if (!list.length) {
+      toast('先点选或拖拽框选音符');
       return null;
     }
-    return sel;
+    return list;
   }
 
   function editPitch(dir) {
-    var sel = requireSel(); if (!sel) return;
+    var list = requireSelNotes(); if (!list) return;
+    var minR = 20, maxR = 0;
+    for (var i = 0; i < list.length; i++) {
+      var r = LABELS.indexOf(list[i].key);
+      if (r < minR) minR = r;
+      if (r > maxR) maxR = r;
+    }
+    var actualDir = clamp(dir, -minR, 20 - maxR);
+    if (actualDir === 0) return;
     pushUndo();
-    var np = stepPitch(sel.pitch, dir);
-    sel.pitch = np; sel.key = pitchToKey(np);
+    for (var j = 0; j < list.length; j++) {
+      var np = stepPitch(list[j].pitch, actualDir);
+      list[j].pitch = np;
+      list[j].key = pitchToKey(np);
+    }
     state.edit.dirty = true;
-    auditionNote(sel);
+    auditionNote(list[list.length - 1]);
     recomputeDerived(); updateEditBar();
     renderDiag(state.currentEntry, state.current); drawRoll(currentScoreMs());
   }
 
   function editPitchTo(targetPitch) {
-    var sel = requireSel(); if (!sel) return;
-    if (sel.pitch === targetPitch) return;
-    pushUndo();
-    sel.pitch = targetPitch; sel.key = pitchToKey(targetPitch);
-    state.edit.dirty = true;
-    auditionNote(sel);
-    recomputeDerived(); updateEditBar();
-    renderDiag(state.currentEntry, state.current); drawRoll(currentScoreMs());
+    var list = requireSelNotes(); if (!list) return;
+    var anchor = list[list.length - 1];
+    if (anchor.pitch === targetPitch) return;
+    var targetRow = LABELS.indexOf(pitchToKey(targetPitch));
+    var anchorRow = LABELS.indexOf(anchor.key);
+    if (targetRow < 0 || anchorRow < 0) return;
+    editPitch(targetRow - anchorRow);
   }
 
   function editTime(deltaMs) {
-    var sel = requireSel(); if (!sel) return;
+    var list = requireSelNotes(); if (!list) return;
+    var minStart = Infinity;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].start < minStart) minStart = list[i].start;
+    }
+    var actualDelta = Math.max(-minStart, deltaMs);
+    if (actualDelta === 0) return;
     pushUndo();
-    var dur = sel.end - sel.start;
-    var newStart = Math.max(0, sel.start + deltaMs);
-    sel.start = newStart;
-    sel.end = newStart + dur;
+    for (var j = 0; j < list.length; j++) {
+      var n = list[j];
+      var dur = n.end - n.start;
+      var newStart = Math.max(0, n.start + actualDelta);
+      n.start = newStart;
+      n.end = newStart + dur;
+    }
     state.edit.dirty = true;
     recomputeDerived(); updateEditBar();
     renderDiag(state.currentEntry, state.current); drawRoll(currentScoreMs());
   }
 
   function editDurDelta(deltaMs) {
-    var sel = requireSel(); if (!sel) return;
+    var list = requireSelNotes(); if (!list) return;
     pushUndo();
-    var d = Math.max(MIN_NOTE_MS, (sel.end - sel.start) + deltaMs);
-    sel.end = sel.start + d;
+    for (var i = 0; i < list.length; i++) {
+      var n = list[i];
+      var d = Math.max(MIN_NOTE_MS, (n.end - n.start) + deltaMs);
+      n.end = n.start + d;
+    }
     state.edit.dirty = true;
-    auditionNote(sel);
+    auditionNote(list[list.length - 1]);
     recomputeDerived(); updateEditBar();
     renderDiag(state.currentEntry, state.current); drawRoll(currentScoreMs());
   }
 
   function editDur(factor) {
-    var sel = requireSel(); if (!sel) return;
+    var list = requireSelNotes(); if (!list) return;
     pushUndo();
-    var d = Math.max(MIN_NOTE_MS, Math.round((sel.end - sel.start) * factor));
-    sel.end = sel.start + d;
+    for (var i = 0; i < list.length; i++) {
+      var n = list[i];
+      var d = Math.max(MIN_NOTE_MS, Math.round((n.end - n.start) * factor));
+      n.end = n.start + d;
+    }
     state.edit.dirty = true;
-    auditionNote(sel);
+    auditionNote(list[list.length - 1]);
     recomputeDerived(); updateEditBar();
     renderDiag(state.currentEntry, state.current); drawRoll(currentScoreMs());
   }
 
   function editDelete() {
-    var sel = requireSel(); if (!sel) return;
+    var list = requireSelNotes(); if (!list) return;
     pushUndo();
-    var i = state.current.notes.indexOf(sel);
-    state.current.notes.splice(i, 1);
-    state.edit.selNote = null;
+    state.current.notes = state.current.notes.filter(function (n) {
+      return list.indexOf(n) < 0;
+    });
+    clearSelection();
     state.edit.dirty = true;
     recomputeDerived(); updateEditBar();
     renderDiag(state.currentEntry, state.current); drawRoll(currentScoreMs());
+  }
+
+  /** 波纹剪辑：删除选定时间区间 [r0, r1]，并将 r1 之后的所有音符整体前移 (r1 - r0) */
+  function rippleDeleteRange() {
+    if (!state.current) return;
+    var range = getActiveTimeRange();
+    if (!range || range.end <= range.start) {
+      toast('请先在顶部刻度尺或画布空白处拖拽框选要剪除的时间段');
+      return;
+    }
+    var r0 = Math.max(0, range.start);
+    var r1 = Math.max(r0, range.end);
+    var span = r1 - r0;
+    if (span <= 0) return;
+
+    pushUndo();
+    var nextNotes = [];
+    var notes = state.current.notes;
+    for (var i = 0; i < notes.length; i++) {
+      var n = notes[i];
+      if (n.end <= r0) {
+        nextNotes.push(n);
+      } else if (n.start >= r1) {
+        n.start = Math.max(0, n.start - span);
+        n.end = Math.max(n.start + MIN_NOTE_MS, n.end - span);
+        nextNotes.push(n);
+      } else if (n.start >= r0 && n.end <= r1) {
+        /* 落在被剪除区间内的音符直接移除 */
+      } else if (n.start < r0 && n.end > r1) {
+        n.end = Math.max(n.start + MIN_NOTE_MS, n.end - span);
+        nextNotes.push(n);
+      } else if (n.start < r0 && n.end > r0) {
+        n.end = Math.max(n.start + MIN_NOTE_MS, r0);
+        nextNotes.push(n);
+      } else if (n.start < r1 && n.end > r1) {
+        n.start = r0;
+        n.end = Math.max(r0 + MIN_NOTE_MS, n.end - span);
+        nextNotes.push(n);
+      }
+    }
+    state.current.notes = nextNotes;
+    if (state.current.baseDurationMs) {
+      state.current.baseDurationMs = Math.max(0, state.current.baseDurationMs - span);
+    }
+    clearSelection();
+    state.edit.dirty = true;
+    recomputeDerived();
+    seekTo(r0, true);
+    updateEditBar();
+    renderDiag(state.currentEntry, state.current);
+    drawRoll(currentScoreMs());
+    toast('已剪除区间 ' + fmtTime(r0) + ' ~ ' + fmtTime(r1) + '，后续音符已前移 ' + Math.round(span) + 'ms', 'ok');
+  }
+
+  /** 在当前播放头（或时间选区起点）向后插入一段空白，后续音符整体后移 */
+  function insertBlankGap(customMs) {
+    if (!state.current) return;
+    var snap = getSnapMs();
+    var tr = (state.edit.timeRange && state.edit.timeRange.end > state.edit.timeRange.start) ? state.edit.timeRange : null;
+    var insertAt = tr ? tr.start : Math.max(0, Math.round(currentScoreMs() / snap) * snap);
+    var gapMs = customMs || (tr ? (tr.end - tr.start) : 1000);
+    if (gapMs <= 0) return;
+
+    pushUndo();
+    var notes = state.current.notes;
+    for (var i = 0; i < notes.length; i++) {
+      var n = notes[i];
+      if (n.start >= insertAt) {
+        n.start += gapMs;
+        n.end += gapMs;
+      } else if (n.end > insertAt) {
+        n.end += gapMs;
+      }
+    }
+    if (state.current.baseDurationMs) {
+      state.current.baseDurationMs += gapMs;
+    }
+    state.edit.dirty = true;
+    recomputeDerived();
+    updateEditBar();
+    renderDiag(state.currentEntry, state.current);
+    drawRoll(currentScoreMs());
+    toast('已在 ' + fmtTime(insertAt) + ' 处插入 ' + Math.round(gapMs) + 'ms 空白，后续音符已后移', 'ok');
+  }
+
+  function selectAllNotes() {
+    if (!state.current || !state.current.notes.length) return;
+    setSelectedNotes(state.current.notes.slice());
+    updateEditBar();
+    drawRoll(currentScoreMs());
+    toast('已全选 ' + state.current.notes.length + ' 个音符', 'ok', 1500);
   }
 
   /** 把当前 notes 导出成 BetterGI 的 midi 型 JSON（ticks=1000,bpm=60 ⇒ 1 tick = 1ms） */
@@ -2550,8 +2954,10 @@
     el.btnDurDown.addEventListener('click', function () { editDur(1 / 1.5); });
     el.btnDurUp.addEventListener('click', function () { editDur(1.5); });
     el.btnDel.addEventListener('click', editDelete);
+    if (el.btnRippleCut) el.btnRippleCut.addEventListener('click', function () { rippleDeleteRange(); });
+    if (el.btnInsertGap) el.btnInsertGap.addEventListener('click', function () { insertBlankGap(); });
     if (el.btnDeselect) el.btnDeselect.addEventListener('click', function () {
-      state.edit.selNote = null;
+      clearSelection();
       updateEditBar();
       drawRoll(currentScoreMs());
     });
@@ -2649,30 +3055,39 @@
       }
     }
 
-    /* 撤销：Ctrl/⌘ + Z（先于「带修饰键直接放行」判断） */
+    /* 撤销：Ctrl/⌘ + Z，全选：Ctrl/⌘ + A（先于「带修饰键直接放行」判断） */
     if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
       e.preventDefault(); undoEdit(); return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+      e.preventDefault(); selectAllNotes(); return;
     }
     /* Alt + 左右方向键：10ms 极细微调（选中音符时微调音符，未选中时微调时间戳） */
     if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       e.preventDefault();
       var fineDelta = e.key === 'ArrowLeft' ? -10 : 10;
-      if (state.edit.on && state.edit.selNote) editTime(fineDelta);
+      if (state.edit.on && getSelectedNotes().length > 0) editTime(fineDelta);
       else stepTimestamp(fineDelta);
       return;
     }
     if (e.ctrlKey || e.altKey || e.metaKey) return;
 
-    /* 编辑模式：Delete 删音符 */
+    /* 编辑模式：Shift+Delete 波纹剪除时间段；Delete 批量删选中音符 */
     if (state.edit.on && (e.key === 'Delete' || e.key === 'Backspace')) {
-      e.preventDefault(); editDelete(); return;
+      e.preventDefault();
+      if (e.shiftKey || (getSelectedNotes().length === 0 && state.edit.timeRange)) {
+        rippleDeleteRange();
+      } else {
+        editDelete();
+      }
+      return;
     }
 
     if (e.code === 'Space') { e.preventDefault(); el.btnPlay.click(); return; }
     if (e.key === 'Escape') {
-      if (state.edit.on && state.edit.selNote) {
+      if (state.edit.on && (getSelectedNotes().length > 0 || state.edit.timeRange)) {
         e.preventDefault();
-        state.edit.selNote = null;
+        clearSelection();
         updateEditBar();
         drawRoll(currentScoreMs());
         return;
@@ -2689,7 +3104,7 @@
     }
 
     /* 编辑模式：选中音符时，上下左右方向键专用于微调音符，不切歌！ */
-    if (state.edit.on && state.edit.selNote) {
+    if (state.edit.on && getSelectedNotes().length > 0) {
       if (e.key === 'ArrowUp') { e.preventDefault(); editPitch(1); return; }
       if (e.key === 'ArrowDown') { e.preventDefault(); editPitch(-1); return; }
       if (e.key === 'ArrowLeft') {

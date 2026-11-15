@@ -1130,6 +1130,10 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
                 <button id="btnDurUp" class="btn btn-xs" title="加长时值（Shift+→）" disabled>+</button>
               </div>
               <button id="btnDel" class="btn btn-xs" title="删除选中音符（Delete）" disabled>删除</button>
+              <div class="btn-group" title="时间段剪辑：在刻度尺或画布拖拽选定时间区间后，可剪除区间并让后续音符整体前移，或插入空白">
+                <button id="btnRippleCut" class="btn btn-xs" type="button" title="剪除选定时间区间，并将后续音符整体前移（Shift+Delete）" disabled>✂ 删区间</button>
+                <button id="btnInsertGap" class="btn btn-xs" type="button" title="在当前时间戳（或选区起点）插入空白，后续音符整体后移" disabled>＋空白</button>
+              </div>
               <button id="btnDeselect" class="btn btn-xs" title="取消选中（Esc）" hidden>取消</button>
               <span class="vrule"></span>
               <span class="mini-label">吸附</span>
@@ -1189,11 +1193,11 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
         </ul>
       </div>
       <div class="help-sec">
-        <h4>3. 画布与歌单操作</h4>
+        <h4>3. 批量框选与时间段剪辑（消除空白）</h4>
         <ul class="help-list">
-          <li><b>画布编辑</b>：点击网格空白处新增音符；拖拽音符主体移动时间/音高；拖拽音符右边缘拉伸时值。</li>
-          <li><b>时间轴浏览</b>：点击顶部刻度尺直接跳转进度；滚轮水平移动时间轴；<span class="help-kbd">Ctrl</span>+滚轮缩放时间窗口。</li>
-          <li><b>曲目管理</b>：点击主标题或歌单项右侧 <span class="help-kbd">✎</span> 内联改名；点击 <span class="help-kbd">×</span> 单独删除曲目。</li>
+          <li><b>批量框选与编辑</b>：在画布空白处按住左键拖拽即可<b>矩形框选</b>多个音符（或 <span class="help-kbd">Shift</span>+点击加减选、<span class="help-kbd">Ctrl+A</span> 全选）。按住任一已选音符拖动可整组平移时间/音高，拖右边缘可批量调整时值，方向键与 <span class="help-kbd">Delete</span> 同样批量生效。</li>
+          <li><b>时间段剪辑（✂ 删区间 / ＋空白）</b>：在<b>顶部时间刻度尺</b>或画布空白处横向拖拽拉出一段<b>时间选区</b>后，点击 <b>「✂ 删区间」</b>（或按 <span class="help-kbd">Shift+Delete</span>）即可删除该时间段并将后续所有音符整体前移，快速消除曲中漫长空白；点击 <b>「＋空白」</b> 可在当前位置向后推开一段空白时间。</li>
+          <li><b>时间轴浏览与曲目管理</b>：轻点顶部刻度尺跳转进度，滚轮或右键拖拽平移时间轴（<span class="help-kbd">Ctrl</span>+滚轮缩放窗口）；点击主标题或歌单项右侧 <span class="help-kbd">✎</span> 内联改名，<span class="help-kbd">×</span> 单独删除曲目。</li>
         </ul>
       </div>
     </div>
