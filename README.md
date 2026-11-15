@@ -1,6 +1,6 @@
 # 原神琴谱制谱器 · Genshin Music Score Maker
 
-> **在线体验演奏台**：[https://yuanqin.upstream.eu.cc/](https://yuanqin.upstream.eu.cc/) （打开即用，自动加载 18 首示范曲目，支持个人本地浏览器自动缓存修改草稿）
+> **在线体验演奏台**：[https://yuanqin.upstream.eu.cc/](https://yuanqin.upstream.eu.cc/) （打开即用，自动加载 17 首示范曲目，支持桌面 / 平板 / 手机自适应与夜间模式，自动缓存个人修改草稿）
 
 一套面向 **原神 21 键乐器（兼容 BetterGI 自动弹奏 `midi` JSON 规范）** 的开源制谱工作流与网页预览编辑台：
 
@@ -31,7 +31,7 @@
 
 ### A. 在线试听与编辑 → 打开演奏台
 
-- **在线访问**：[https://yuanqin.upstream.eu.cc/](https://yuanqin.upstream.eu.cc/)（自动载入 `library/` 中的 18 首示范曲）
+- **在线访问**：[https://yuanqin.upstream.eu.cc/](https://yuanqin.upstream.eu.cc/)（自动载入 `library/` 中的 17 首示范曲）
 - **本地离线使用**：直接双击 [`app/index.html`](app/index.html)，将你的曲谱目录或单个 `.json` 文件拖进页面即可
 
 主要功能：
@@ -74,7 +74,7 @@ python skills/genshin-music-scores/scripts/score_cli.py convert "path/to/song.mi
 │   ├── js/                       解析器 / 音频引擎 / 界面（本地可选启用 samples*.js，不进 git）
 │   ├── scripts/                  网页工程脚本（build_site.py 构建静态站 / fetch_samples.py 拉取可选采样）
 │   └── tests/                    5 套自动化测试 + 截图工具 + 采样生成器
-├── library/                      ★ 人工挑选的成品示范曲库（18 首，供工具演示与网页端在线试听）
+├── library/                      ★ 人工挑选的成品示范曲库（17 首，供工具演示与网页端在线试听）
 ├── LICENSE                       GPL-3.0
 └── NOTICE.md                     ★ 来源与版权声明，开源前必读
 ```
@@ -96,7 +96,7 @@ python skills/genshin-music-scores/scripts/score_cli.py convert "path/to/song.mi
 
 ```bash
 node app/tests/integration.test.js       # 契约 + 示范库不变量
-node app/tests/parse.test.js library     # 解析器回归（18 首示范曲 / 20,551 音符）
+node app/tests/parse.test.js library     # 解析器回归（17 首示范曲 / 19,468 音符）
 node app/tests/audio.test.js             # 音频引擎 / 文件名→音高映射
 node app/tests/realtime.test.js          # 真实时间端到端（Chrome + CDP）
 node app/tests/ui.test.js                # 音色 / 键盘弹奏 / 编辑 / 连播（Chrome + CDP）
@@ -108,7 +108,7 @@ node app/tests/ui.test.js                # 音色 / 键盘弹奏 / 编辑 / 连�
 
 - **代码**：GPL-3.0。解析器语义按 GPL-3.0 协议开源的 BetterGI 复刻，因此本项目代码同样以 GPL-3.0 发布。
 - **游戏音频不随仓库分发**：公开仓库与线上网页版仅提供内置 WebAudio 合成音色，并支持用户自行加载本地采样文件夹；游戏采样版权归 miHoYo 所有。
-- **`library/` 示范曲目**：人工挑选的 18 首成品展示曲谱，用于演示工具链输出效果与网页端直接试听。词曲著作权归原作者/权利方所有，如权利人有异议，请提 Issue，我们会直接移除对应文件。
+- **`library/` 示范曲目**：人工挑选的 17 首成品展示曲谱，用于演示工具链输出效果与网页端直接试听。词曲著作权归原作者/权利方所有，如权利人有异议，请提 Issue，我们会直接移除对应文件。
 
 详见 [NOTICE.md](NOTICE.md)。
 
