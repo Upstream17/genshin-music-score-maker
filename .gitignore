@@ -6,7 +6,7 @@
 /site/
 /output/
 
-# ── 游戏音频采样（受版权限制不随仓库分发，可在本地通过 tools/fetch_samples.py 生成）──
+# ── 游戏音频采样（受版权限制不随仓库分发，可在本地通过 app/scripts/fetch_samples.py 生成）──
 /app/js/samples*.js
 
 # ── 本地试听合成音频 ──
