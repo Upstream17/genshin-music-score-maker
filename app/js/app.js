@@ -1044,7 +1044,10 @@
         n.end = Math.max(n.start + MIN_NOTE_MS, snappedEnd);
         any = true;
       }
-      if (n) delete n._recStretched;
+      if (n) {
+        delete n._recStretched;
+        delete n._recActive;
+      }
       delete state.recActiveNotes[k];
     }
     if (any) {
@@ -1054,6 +1057,8 @@
     }
   }
 
+  var lastRecBarUpdateTs = 0;
+
   function syncActiveRecNotes(t) {
     if (!state.recording || !state.current) return false;
     var stretched = false;
@@ -1062,8 +1067,9 @@
       if (Object.prototype.hasOwnProperty.call(state.recActiveNotes, rk)) {
         var rn = state.recActiveNotes[rk];
         if (!rn) continue;
+        rn._recActive = true;
         if (state.playing || Math.round(t) > rn.start) {
-          var nextEnd = Math.max(rn.start + MIN_NOTE_MS, Math.round(t));
+          var nextEnd = Math.max(rn.start + MIN_NOTE_MS, state.playing ? Math.ceil(t) : Math.round(t));
           rn._recStretched = true;
           if (nextEnd !== rn.end) {
             rn.end = nextEnd;
@@ -1084,7 +1090,11 @@
         sc.stats.durationMs = maxEnd;
         if (el.tTotal) el.tTotal.textContent = fmtTime(maxEnd);
       }
-      updateEditBar();
+      var nowWall = Date.now();
+      if (!state.playing || nowWall - lastRecBarUpdateTs >= 45) {
+        lastRecBarUpdateTs = nowWall;
+        updateEditBar();
+      }
     }
     return stretched;
   }
@@ -1116,16 +1126,18 @@
     pushUndo();
     var rawMs = currentScoreMs();
     var snap = getSnapMs();
-    var start = Math.max(0, Math.round(rawMs / snap) * snap);
+    var snappedStart = Math.round(rawMs / snap) * snap;
+    var start = Math.max(0, state.playing ? Math.min(Math.floor(rawMs), snappedStart) : snappedStart);
     var initDur = state.playing ? MIN_NOTE_MS : (state.edit.lastDur || DEFAULT_DUR);
     var note = {
       key: k,
       pitch: keyToPitch(k),
       start: start,
-      end: Math.max(start + initDur, Math.round(rawMs)),
+      end: Math.max(start + initDur, Math.ceil(rawMs)),
       velocity: 1,
       _liveRecorded: true,
-      _recStretched: !!state.playing
+      _recStretched: !!state.playing,
+      _recActive: true
     };
     state.current.notes.push(note);
     state.edit.selNote = null;
@@ -1151,6 +1163,7 @@
       state.edit.lastDur = note.end - note.start;
     }
     delete note._recStretched;
+    delete note._recActive;
     recomputeDerived();
     updateEditBar();
     renderDiag(state.currentEntry, state.current);
@@ -1341,9 +1354,17 @@
     var out = [], limit = state.maxNoteMs || 1, scanned = 0;
     for (var i = idx - 1; i >= 0; i--) {
       var n = notes[i];
-      if (t - n.start >= limit) break;
-      if (n.end > t) out.push(n);
+      if (!n._recActive && t - n.start >= limit) break;
+      if (n.end > t || n._recActive) out.push(n);
       if (++scanned > 3000) break;
+    }
+    if (state.recording) {
+      for (var rk in state.recActiveNotes) {
+        if (Object.prototype.hasOwnProperty.call(state.recActiveNotes, rk)) {
+          var rn = state.recActiveNotes[rk];
+          if (rn && out.indexOf(rn) < 0) out.push(rn);
+        }
+      }
     }
     return out;
   }
@@ -1928,10 +1949,13 @@
       var ri = LABELS.indexOf(n.key);
       if (ri < 0) continue;
       var yy = g.plotTop + g.plotH - (ri + 1) * g.rowH;
+      var isRecActive = !!n._recActive;
       var x0 = Math.max(g.GUT, g.xOf(n.start));
-      var x1 = Math.min(W - g.PAD, g.xOf(n.end));
+      var x1 = (isRecActive && state.playing)
+        ? Math.min(W - g.PAD, Math.max(x0 + 2, hx))
+        : Math.min(W - g.PAD, g.xOf(n.end));
       if (x1 - x0 < 2) x1 = x0 + 2;
-      var hot = (n.start <= t && n.end > t);
+      var hot = isRecActive || (n.start <= t && n.end > t);
 
       /* 低/中/高三排用同一个强调色的三级明度，保持淡雅 */
       ctx.fillStyle = hot ? '#2f6b58'
