@@ -835,6 +835,27 @@ function pageScript(scoreUrls) {
     await cdp.send('Emulation.clearDeviceMetricsOverride');
     await sleep(100);
 
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+    await sleep(220);
+    const laptopOneScreen = JSON.parse((await cdp.send('Runtime.evaluate', {
+      expression: `JSON.stringify({
+        docOverflow: document.documentElement.scrollHeight > window.innerHeight + 1,
+        mainOverflow: (function(){ var m = document.querySelector('.main'); return m.scrollHeight > m.clientHeight + 2; })(),
+        rollTop: document.querySelector('#roll').getBoundingClientRect().top,
+        rollBottom: document.querySelector('#roll').getBoundingClientRect().bottom,
+        rollHeight: document.querySelector('#roll').getBoundingClientRect().height,
+        innerHeight: window.innerHeight
+      })`,
+      returnByValue: true
+    })).result.value || '{}');
+    ok('电脑端 1280x720 视口一屏智能缩放铺满（无上下滚动且卷帘贴底完整）',
+      !laptopOneScreen.docOverflow && !laptopOneScreen.mainOverflow &&
+      laptopOneScreen.rollHeight >= 220 && laptopOneScreen.rollBottom <= laptopOneScreen.innerHeight + 1,
+      JSON.stringify(laptopOneScreen));
+
+    await cdp.send('Emulation.clearDeviceMetricsOverride');
+    await sleep(100);
+
     await cdp.send('Runtime.evaluate', {
       expression: `document.querySelector('#btnClearList').click()`
     });

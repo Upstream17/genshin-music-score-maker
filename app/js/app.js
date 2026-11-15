@@ -1794,6 +1794,12 @@
     el.roll.addEventListener('contextmenu', function (ev) { ev.preventDefault(); });
 
     window.addEventListener('resize', function () { drawRoll(currentScoreMs()); });
+    if (typeof ResizeObserver === 'function' && el.roll && el.roll.parentElement) {
+      var rollResizeObs = new ResizeObserver(function () {
+        requestAnimationFrame(function () { drawRoll(currentScoreMs()); });
+      });
+      rollResizeObs.observe(el.roll.parentElement);
+    }
   }
 
   function markDragHandled() {
@@ -2330,7 +2336,8 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
 
-    var LABEL_FONT = '8.5px "Cascadia Mono", Consolas, monospace';
+    var labelPx = clamp(Math.round(g.rowH * 0.62 * 2) / 2, 7.5, 10.5);
+    var LABEL_FONT = labelPx + 'px "Cascadia Mono", Consolas, monospace';
 
     ctx.fillStyle = pal.bg;
     ctx.fillRect(0, 0, W, H);
@@ -2435,7 +2442,7 @@
 
     /* 音符 */
     var notes = state.current.notes;
-    var barH = Math.max(2, g.rowH - 2);
+    var barH = clamp(g.rowH - Math.max(1.5, g.rowH * 0.14), 2, g.rowH - 1.5);
     var start = upperBoundStart(notes, g.t0 - Math.max(6000, state.maxNoteMs || 6000));
 
     for (var i = start; i < notes.length; i++) {
