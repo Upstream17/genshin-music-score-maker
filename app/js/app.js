@@ -47,7 +47,7 @@
   var el = {};
   function cacheDom() {
     [
-      'appRoot', 'btnSidebar', 'btnSidebarClose', 'sidebarPanel', 'sidebarBackdrop',
+      'metaColorScheme', 'appRoot', 'btnSidebar', 'btnSidebarClose', 'sidebarPanel', 'sidebarBackdrop', 'btnTheme',
       'btnNewScore', 'btnPickFiles', 'btnPickDir', 'dropzone', 'fileInput', 'dirInput',
       'importProgress', 'importBar', 'importText',
       'search', 'listCount', 'btnClearList', 'scoreList',
@@ -83,6 +83,7 @@
     instrumentKey: '',      /* 'real:<id>' 真实采样 | 'synth:<id>' 合成 */
     customFiles: null,      /* 用户自己加载的采样（本会话有效） */
     volume: 0.8,
+    theme: 'light',
     samplesReady: false,
 
     playing: false,
@@ -514,6 +515,7 @@
         speed: state.speed,
         playMode: state.playMode,
         playKeys: !!state.playKeys,
+        theme: state.theme === 'dark' ? 'dark' : 'light',
         instrumentKey: state.instrumentKey === 'real:custom' ? '' : state.instrumentKey
       },
       hiddenShowcase: Object.keys(hiddenShowcasePaths),
@@ -1792,12 +1794,6 @@
     el.roll.addEventListener('contextmenu', function (ev) { ev.preventDefault(); });
 
     window.addEventListener('resize', function () { drawRoll(currentScoreMs()); });
-    if (window.matchMedia) {
-      var darkMq = window.matchMedia('(prefers-color-scheme: dark)');
-      var onThemeChange = function () { drawRoll(currentScoreMs()); };
-      if (typeof darkMq.addEventListener === 'function') darkMq.addEventListener('change', onThemeChange);
-      else if (typeof darkMq.addListener === 'function') darkMq.addListener(onThemeChange);
-    }
   }
 
   function markDragHandled() {
@@ -2261,8 +2257,7 @@
   }
 
   function isDarkTheme() {
-    return typeof window !== 'undefined' && window.matchMedia &&
-      window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return state.theme === 'dark';
   }
 
   function rollPalette() {
@@ -3110,6 +3105,12 @@
     if (el.sidebarBackdrop) {
       el.sidebarBackdrop.addEventListener('click', function () { setSidebarOpen(false); });
     }
+    if (el.btnTheme) {
+      el.btnTheme.addEventListener('click', function () {
+        applyTheme(state.theme === 'dark' ? 'light' : 'dark');
+        scheduleSaveWorkspace();
+      });
+    }
     window.addEventListener('resize', syncSidebarUi);
 
     if (el.btnNewScore) {
@@ -3597,6 +3598,22 @@
     el.btnPlayKeys.setAttribute('aria-pressed', state.playKeys ? 'true' : 'false');
   }
 
+  function applyTheme(mode, skipRedraw) {
+    var dark = mode === 'dark';
+    state.theme = dark ? 'dark' : 'light';
+    if (dark) document.documentElement.setAttribute('data-theme', 'dark');
+    else document.documentElement.removeAttribute('data-theme');
+    if (el.metaColorScheme) el.metaColorScheme.setAttribute('content', state.theme);
+    if (el.btnTheme) {
+      var label = dark ? '切换浅色模式' : '切换夜间模式';
+      el.btnTheme.classList.toggle('is-on', dark);
+      el.btnTheme.setAttribute('aria-pressed', dark ? 'true' : 'false');
+      el.btnTheme.setAttribute('aria-label', label);
+      el.btnTheme.title = label;
+    }
+    if (!skipRedraw && rCtx) drawRoll(currentScoreMs());
+  }
+
   function init() {
     cacheDom();
 
@@ -3618,6 +3635,7 @@
     if (typeof prefs.playKeys === 'boolean') {
       state.playKeys = prefs.playKeys;
     }
+    applyTheme(prefs.theme === 'dark' ? 'dark' : 'light', true);
 
     buildKeyboard();
     initRoll();

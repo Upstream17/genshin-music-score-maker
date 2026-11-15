@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" id="metaColorScheme" content="light">
 <title>Genshin Music Score Maker · 原神琴谱演奏台</title>
 <style>
 /* ==========================================================================
@@ -183,11 +183,37 @@ html, body {
   transition: color .14s ease-out, border-color .14s ease-out, background .14s ease-out;
 }
 .top-link svg { width: 13px; height: 13px; fill: currentColor; flex: none; }
-.top-link:hover {
+.top-link:hover,
+.btn.top-theme-btn:hover:not(:disabled) {
   color: var(--accent);
   border-color: var(--accent);
   background: var(--accent-soft);
 }
+.btn.top-theme-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: var(--r);
+  border-color: var(--rule-2);
+  background: var(--surface);
+  color: var(--ink-2);
+  flex: 0 0 auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn.top-theme-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.btn.top-theme-btn .ico-sun { display: none; }
+:root[data-theme="dark"] .btn.top-theme-btn .ico-moon { display: none; }
+:root[data-theme="dark"] .btn.top-theme-btn .ico-sun { display: block; }
 .status {
   font-size: 11.5px;
   letter-spacing: .08em;
@@ -1119,44 +1145,42 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
   .top-link span { display: none; }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper:       #141615;
-    --paper-2:     #1c1f1d;
-    --paper-3:     #252926;
-    --surface:     #191c1a;
-    --surface-2:   #171918;
+:root[data-theme="dark"] {
+  --paper:       #141615;
+  --paper-2:     #1c1f1d;
+  --paper-3:     #252926;
+  --surface:     #191c1a;
+  --surface-2:   #171918;
 
-    --ink:         #e3e6e3;
-    --ink-2:       #afb6b0;
-    --ink-3:       #7c837e;
-    --ink-4:       #565c58;
+  --ink:         #e3e6e3;
+  --ink-2:       #afb6b0;
+  --ink-3:       #7c837e;
+  --ink-4:       #565c58;
 
-    --rule:        #2a2e2b;
-    --rule-2:      #373c38;
+  --rule:        #2a2e2b;
+  --rule-2:      #373c38;
 
-    --accent:      #3d8c72;
-    --accent-dk:   #32755f;
-    --accent-soft: #1d322b;
+  --accent:      #3d8c72;
+  --accent-dk:   #32755f;
+  --accent-soft: #1d322b;
 
-    --danger:      #d66a54;
-  }
-  .btn-rec.is-rec {
-    border-color: #6b382e;
-    background: #2c1b18;
-  }
-  .li-btn.li-del:hover {
-    border-color: #6b382e;
-    background: #2c1b18;
-  }
-  .sample-stat.ok { border-color: #2c4a3f; }
-  .sample-stat.err { border-color: #5c332b; }
-  .badge.err { border-color: #6b382e; }
-  .drag-veil { background: rgba(20, 22, 21, .92); }
-  .toast { background: #262b28; color: #ecefed; }
-  .help-backdrop,
-  .sidebar-backdrop { background: rgba(0, 0, 0, .58); }
+  --danger:      #d66a54;
 }
+:root[data-theme="dark"] .btn-rec.is-rec {
+  border-color: #6b382e;
+  background: #2c1b18;
+}
+:root[data-theme="dark"] .li-btn.li-del:hover {
+  border-color: #6b382e;
+  background: #2c1b18;
+}
+:root[data-theme="dark"] .sample-stat.ok { border-color: #2c4a3f; }
+:root[data-theme="dark"] .sample-stat.err { border-color: #5c332b; }
+:root[data-theme="dark"] .badge.err { border-color: #6b382e; }
+:root[data-theme="dark"] .drag-veil { background: rgba(20, 22, 21, .92); }
+:root[data-theme="dark"] .toast { background: #262b28; color: #ecefed; }
+:root[data-theme="dark"] .help-backdrop,
+:root[data-theme="dark"] .sidebar-backdrop { background: rgba(0, 0, 0, .58); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -1195,6 +1219,10 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
 
     <div class="top-right">
       <span id="liveText" class="status">空闲</span>
+      <button id="btnTheme" class="btn top-theme-btn" type="button" aria-pressed="false" aria-label="切换夜间模式" title="切换夜间模式">
+        <svg class="ico-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+        <svg class="ico-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </button>
       <a id="btnGithub" class="top-link" href="https://github.com/Upstream17/genshin-music-score-maker" target="_blank" rel="noopener noreferrer" title="打开 GitHub 开源仓库" aria-label="GitHub 开源仓库">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
         <span>GitHub</span>

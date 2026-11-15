@@ -742,20 +742,56 @@ function pageScript(scoreUrls) {
     ok('触屏手指拖拽框选可正常多选音符', /已选\s+\d+\s*音/.test(touchMulti.result.value || ''), touchMulti.result.value);
 
     await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
-    await sleep(180);
-    const darkRollPx = JSON.parse((await cdp.send('Runtime.evaluate', {
+    await sleep(140);
+    const defaultLightInOsDark = JSON.parse((await cdp.send('Runtime.evaluate', {
       expression: `(function(){
         var cv = document.querySelector('#roll');
         var ctx = cv.getContext('2d');
         var px = ctx.getImageData(4, 4, 1, 1).data;
-        var bodyBg = getComputedStyle(document.body).backgroundColor;
-        return JSON.stringify({ r: px[0], g: px[1], b: px[2], bodyBg: bodyBg });
+        var themeAttr = document.documentElement.getAttribute('data-theme');
+        return JSON.stringify({ r: px[0], g: px[1], b: px[2], themeAttr: themeAttr });
       })()`,
       returnByValue: true
     })).result.value || '{}');
-    ok('夜间模式（prefers-color-scheme: dark）编辑区画布自动同步深色配色',
-      darkRollPx.r < 60 && darkRollPx.g < 60 && darkRollPx.b < 60,
-      JSON.stringify(darkRollPx));
+    ok('系统处于夜间模式时网页默认仍保持浅色纸白主题',
+      defaultLightInOsDark.themeAttr !== 'dark' && defaultLightInOsDark.r > 230 && defaultLightInOsDark.g > 230 && defaultLightInOsDark.b > 230,
+      JSON.stringify(defaultLightInOsDark));
+
+    await cdp.send('Runtime.evaluate', { expression: `document.querySelector('#btnTheme').click()` });
+    await sleep(140);
+    const toggledDarkPx = JSON.parse((await cdp.send('Runtime.evaluate', {
+      expression: `(function(){
+        var cv = document.querySelector('#roll');
+        var ctx = cv.getContext('2d');
+        var px = ctx.getImageData(4, 4, 1, 1).data;
+        var themeAttr = document.documentElement.getAttribute('data-theme');
+        var pressed = document.querySelector('#btnTheme').getAttribute('aria-pressed');
+        return JSON.stringify({ r: px[0], g: px[1], b: px[2], themeAttr: themeAttr, pressed: pressed });
+      })()`,
+      returnByValue: true
+    })).result.value || '{}');
+    ok('点击主题按钮可切换深色模式且编辑区画布同步深色配色',
+      toggledDarkPx.themeAttr === 'dark' && toggledDarkPx.pressed === 'true' &&
+      toggledDarkPx.r < 60 && toggledDarkPx.g < 60 && toggledDarkPx.b < 60,
+      JSON.stringify(toggledDarkPx));
+
+    await cdp.send('Runtime.evaluate', { expression: `document.querySelector('#btnTheme').click()` });
+    await sleep(140);
+    const toggledBackLightPx = JSON.parse((await cdp.send('Runtime.evaluate', {
+      expression: `(function(){
+        var cv = document.querySelector('#roll');
+        var ctx = cv.getContext('2d');
+        var px = ctx.getImageData(4, 4, 1, 1).data;
+        var themeAttr = document.documentElement.getAttribute('data-theme');
+        var pressed = document.querySelector('#btnTheme').getAttribute('aria-pressed');
+        return JSON.stringify({ r: px[0], g: px[1], b: px[2], themeAttr: themeAttr, pressed: pressed });
+      })()`,
+      returnByValue: true
+    })).result.value || '{}');
+    ok('再次点击主题按钮可切回浅色纸白模式',
+      toggledBackLightPx.themeAttr !== 'dark' && toggledBackLightPx.pressed === 'false' &&
+      toggledBackLightPx.r > 230 && toggledBackLightPx.g > 230 && toggledBackLightPx.b > 230,
+      JSON.stringify(toggledBackLightPx));
     await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
     await sleep(120);
 
