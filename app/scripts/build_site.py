@@ -16,8 +16,10 @@
 """
 import argparse
 import glob
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +28,17 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 APP_DIR = os.path.join(ROOT, "app")
 LIB_DIR = os.path.join(ROOT, "library")
 OUT_DIR = os.path.join(ROOT, "site")
+
+
+def _file_hash8(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()[:8]
 
 
 def build_site(out_dir=OUT_DIR, with_samples=False):
@@ -38,7 +51,6 @@ def build_site(out_dir=OUT_DIR, with_samples=False):
     os.makedirs(js_out, exist_ok=True)
     os.makedirs(lib_out, exist_ok=True)
 
-    shutil.copy2(os.path.join(APP_DIR, "index.html"), os.path.join(out_dir, "index.html"))
     for name in ("bettergi-parse.js", "audio-engine.js", "app.js"):
         shutil.copy2(os.path.join(APP_DIR, "js", name), os.path.join(js_out, name))
 
@@ -51,6 +63,34 @@ def build_site(out_dir=OUT_DIR, with_samples=False):
         with open(os.path.join(js_out, "samples.js"), "w", encoding="utf-8") as f:
             f.write("/* Game audio samples omitted for copyright; fallback to built-in WebAudio synth. */\n")
         samples_note = "synth fallback placeholder"
+
+    # Inject per-file content hash query strings into built index.html so updated JS
+    # never pairs with stale max-age cached scripts on Cloudflare Pages.
+    hashes = {
+        name: _file_hash8(os.path.join(js_out, name))
+        for name in ("bettergi-parse.js", "audio-engine.js", "samples.js", "app.js")
+        if os.path.exists(os.path.join(js_out, name))
+    }
+    with open(os.path.join(APP_DIR, "index.html"), "r", encoding="utf-8") as f:
+        html = f.read()
+    for name, ver in hashes.items():
+        html = re.sub(
+            rf'src="js/{re.escape(name)}(?:\?v=[^"]*)?"',
+            f'src="js/{name}?v={ver}"',
+            html,
+        )
+    with open(os.path.join(out_dir, "index.html"), "w", encoding="utf-8") as f:
+        f.write(html)
+
+    with open(os.path.join(out_dir, "_headers"), "w", encoding="utf-8") as f:
+        f.write(
+            "/index.html\n"
+            "  Cache-Control: public, max-age=0, must-revalidate\n"
+            "/js/*\n"
+            "  Cache-Control: public, max-age=0, must-revalidate\n"
+            "/library/*\n"
+            "  Cache-Control: public, max-age=0, must-revalidate\n"
+        )
 
     files = sorted(f for f in os.listdir(LIB_DIR) if f.lower().endswith(".json"))
     for fname in files:

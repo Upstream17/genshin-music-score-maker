@@ -670,7 +670,12 @@ function pageScript(scoreUrls) {
       tabletInit.exportRight <= tabletInit.mainRight + 1,
       JSON.stringify(tabletInit));
 
-    await cdp.send('Runtime.evaluate', { expression: `document.querySelector('#btnSidebar').click()` });
+    const btnRectTablet = JSON.parse((await cdp.send('Runtime.evaluate', {
+      expression: `(function(){ var r = document.querySelector('#btnSidebar').getBoundingClientRect(); return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2 }); })()`,
+      returnByValue: true
+    })).result.value || '{}');
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: btnRectTablet.x, y: btnRectTablet.y, button: 'left', clickCount: 1 });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: btnRectTablet.x, y: btnRectTablet.y, button: 'left', clickCount: 1 });
     await sleep(220);
     const tabletOpen = JSON.parse((await cdp.send('Runtime.evaluate', {
       expression: `JSON.stringify({
@@ -685,6 +690,29 @@ function pageScript(scoreUrls) {
       JSON.stringify(tabletOpen));
     await cdp.send('Runtime.evaluate', { expression: `document.querySelector('#btnSidebarClose').click()` });
     await sleep(220);
+
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1024, height: 768, deviceScaleFactor: 2, mobile: true });
+    await sleep(180);
+    const btnRectTabLand = JSON.parse((await cdp.send('Runtime.evaluate', {
+      expression: `(function(){ var r = document.querySelector('#btnSidebar').getBoundingClientRect(); return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2 }); })()`,
+      returnByValue: true
+    })).result.value || '{}');
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: btnRectTabLand.x, y: btnRectTabLand.y, button: 'left', clickCount: 1 });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: btnRectTabLand.x, y: btnRectTabLand.y, button: 'left', clickCount: 1 });
+    await sleep(150);
+    const tabLandCollapse = JSON.parse((await cdp.send('Runtime.evaluate', {
+      expression: `JSON.stringify({
+        collapsed: document.querySelector('#appRoot').classList.contains('is-sidebar-collapsed'),
+        sidebarWidth: document.querySelector('#sidebarPanel').getBoundingClientRect().width
+      })`,
+      returnByValue: true
+    })).result.value || '{}');
+    ok('平板横屏点击顶栏按钮可折叠与恢复曲目栏',
+      tabLandCollapse.collapsed && tabLandCollapse.sidebarWidth === 0,
+      JSON.stringify(tabLandCollapse));
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: btnRectTabLand.x, y: btnRectTabLand.y, button: 'left', clickCount: 1 });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: btnRectTabLand.x, y: btnRectTabLand.y, button: 'left', clickCount: 1 });
+    await sleep(150);
 
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true });
     await sleep(180);

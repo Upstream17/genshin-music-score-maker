@@ -81,6 +81,9 @@ html, body {
   background: transparent;
   color: var(--ink-2);
   flex: 0 0 auto;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 .btn.top-sidebar-btn svg {
   width: 17px;
@@ -90,6 +93,7 @@ html, body {
   stroke-width: 1.65;
   stroke-linecap: round;
   stroke-linejoin: round;
+  pointer-events: none;
 }
 .btn.top-sidebar-btn .sb-pane {
   fill: transparent;
