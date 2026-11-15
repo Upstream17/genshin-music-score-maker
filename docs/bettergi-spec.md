@@ -352,7 +352,7 @@ private static TimeSpan GetNoteDuration(double bpm, int beatDenominator, double 
 
 ### 3.3 特殊标记总表（含本工作区实测频次）
 
-对 `完整曲库` 全库 `[...]` 内容做的实测统计（`yuanqin` 型）：
+对 307 份真实曲谱样本 `[...]` 内容做的实测统计（`yuanqin` 型）：
 
 ```
 16 9391 | 8 7744 | 4 3246 | 8-* 427 | 2 268 | 32 241 | 4-8.3 170 | 4-* 144
@@ -460,7 +460,7 @@ private static void AddNote(ICollection<PerformanceEvent> events, TimeSpan start
 - **大小写不敏感**（`ToUpperInvariant`）。
 - **去重**（`Distinct()`）⇒ `(CC)[4]` 只按一次 C。
 - 非法键**静默丢弃，无警告**；`@` 整体跳过（同 `midi`）。
-- **`@` 在 `yuanqin` 里同样是休止占位**：实测 `完整曲库\01_原琴JSON\关键词 - 3A1TeP33.json` 大量 `@[8]`/`@[4]`/`@[1]`。
+- **`@` 在 `yuanqin` 里同样是休止占位**：实测《关键词》等样本存在大量 `@[8]`/`@[4]`/`@[1]`。
 - 每个键产生 **一对** KeyDown(start) / KeyUp(start+duration)。
 
 ---
@@ -1031,14 +1031,14 @@ public void KeyUp(char key)
 
 ---
 
-## 8. 与本地 `完整曲库`（307 个 JSON）的实测对照
+## 8. 与 307 个真实曲谱样本的实测对照
 
 | 项 | 实测 |
 |---|---|
-| 文件总数 | 307（`01_原琴JSON` 118 / `02_键谱转换JSON` 59 / `04_MIDI-21键适配JSON` 83 / `05_我的新增` 47） |
+| 文件总数 | 307 个真实 JSON 样本（含公开社区原琴谱、键谱转换及 MIDI 转换成品） |
 | `type` 分布 | `midi` **265**、`yuanqin` **27**、`keyboard` **8**、**缺省（无 `type`）7** |
 | 缺省 7 个 | 全部脚注为 `yuanqin` 语义（`notes` 带 `[n]` 时值，含 `@` 休止），验证 `type` 缺省 = `yuanqin` |
-| 缺省文件举例 | `01_原琴JSON/关键词 - 3A1TeP33.json`（`bpm:"140"` 字符串、`notes:"(EUJV)[8]N[8]…@[8]…"`） |
+| 缺省文件举例 | 《关键词》（`bpm:"140"` 字符串、`notes:"(EUJV)[8]N[8]…@[8]…"`） |
 | `bpm` 字符串 | 真实存在（`"140"` / `"80"` / `"93"` / `"236"`），`GetDouble` 走 `ToString()` 后 `double.TryParse` |
 | `midi` 型 `*bpm` 头 | 实测 `aLIEz …json` 的 `notes` 以 `*99|` 开头，而 `bpm` 字段是 `99` ⇒ 头部标记与字段一致 |
 | `midi` 的 `@` 实测 | `…|DEHNZ0|UH90|U@30|D@0|UENZ120|…`（`U@30` / `D@0` 成对出现，纯时间占位） |
@@ -1051,7 +1051,7 @@ public void KeyUp(char key)
 | 键盘预处理复刻自测 | §4.1 五步在真实片段上逐步输出与源码语义一致（见 §4.1 验证块） |
 | **全库音符总数（含两段整理）** | **321,330**（`midi` 284,463 / `yuanqin` 24,561 / `keyboard` 7,296 / 缺省→yuanqin 5,010） |
 | 零长度/负长度音符 | **0**（见 §5.3c；`Normalize` 阶段 1 的插入时刻恒 > 上一个 KeyDown） |
-| 全库最大同刻键数 | **20**（`04_MIDI-21键适配JSON/【原神演奏】Lemon 欢快的版本.json`） |
+| 全库最大同刻键数 | **20**（高密度钢琴改编样本） |
 | 非法键 warning | 26 条（都是 21 键外的真非法键，如 `N`/`K`；小写键字母已正确大写，不再产生假 warning） |
 | 跨实现一致性 | 与独立参照实现（逐行移植上游源码 + 同款 `Normalize`）逐音比对：**307/307 文件、321,330 音、0 内容差异** |
 

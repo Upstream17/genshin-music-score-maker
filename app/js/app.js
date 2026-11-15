@@ -2752,6 +2752,77 @@
     document.body.appendChild(d);
   }
 
+  function xhrGetJsonText(url) {
+    return new Promise(function (resolve, reject) {
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.onload = function () {
+        if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.responseText);
+        else reject(new Error('HTTP ' + xhr.status));
+      };
+      xhr.onerror = function () { reject(new Error('network error')); };
+      xhr.send();
+    });
+  }
+
+  /** 在 HTTP(S) 托管环境下自动载入内置示范曲库（file:// 本地直开时不发任何网络请求） */
+  async function loadShowcaseLibrary() {
+    if (typeof window === 'undefined' || !window.location) return;
+    var proto = window.location.protocol;
+    if (proto !== 'http:' && proto !== 'https:') return;
+
+    var files;
+    try {
+      var mfText = await xhrGetJsonText('library/manifest.json');
+      var mf = JSON.parse(mfText);
+      files = Array.isArray(mf) ? mf : (mf && Array.isArray(mf.files) ? mf.files : []);
+    } catch (_) {
+      return;
+    }
+    if (!files.length) return;
+
+    var existingPaths = {};
+    state.entries.forEach(function (e) { existingPaths[e.path] = true; });
+    var added = 0;
+
+    for (var i = 0; i < files.length; i++) {
+      var fname = String(files[i] || '');
+      if (!fname || !/\.json$/i.test(fname)) continue;
+      var relPath = 'library/' + fname;
+      if (existingPaths[relPath]) continue;
+      try {
+        var text = await xhrGetJsonText('library/' + encodeURIComponent(fname));
+        var obj = JSON.parse(text);
+        var sc = window.BGIParse.parseScore(obj, { filename: fname });
+        state.entries.push({
+          id: state.nextId++,
+          path: relPath,
+          fileName: fname,
+          name: sc.ok ? (sc.name || fname.replace(/\.json$/i, '')) : fname.replace(/\.json$/i, ''),
+          author: sc.author || '',
+          type: sc.type || 'unknown',
+          ok: !!sc.ok,
+          error: sc.error || '',
+          noteCount: sc.stats ? sc.stats.noteCount : 0,
+          durationMs: sc.stats ? sc.stats.durationMs : 0,
+          instrument: sc.instrument || '',
+          text: text
+        });
+        existingPaths[relPath] = true;
+        added++;
+      } catch (_) { }
+    }
+
+    if (!added) return;
+    sortEntries();
+    renderList();
+    if (!state.selectedId) {
+      var firstOk = state.entries.filter(function (e) { return e.ok; })[0];
+      if (firstOk) selectEntry(firstOk.id);
+    }
+    updateTrackNav();
+  }
+
   function init() {
     cacheDom();
 
@@ -2775,12 +2846,15 @@
     bind();
     requestAnimationFrame(frame);
 
-    /* 默认音色 = 真实采样（风物之诗琴）。尽量早解码，用户点播放时已就绪。 */
+    /* 默认音色 = 真实采样（风物之诗琴）。若未打包采样数据，则切到默认合成音色并提示。 */
     if (!sampleManifest()) {
-      setSampleStat('未找到采样数据（js/samples.js）· 只能使用合成音色', 'err');
+      applyInstrument(firstKey);
+      setSampleStat('当前使用内置合成音色 · 可在下方加载自定义采样文件夹', '');
     } else {
       applyInstrument(firstKey);
     }
+
+    loadShowcaseLibrary();
 
     window.addEventListener('beforeunload', function (e) {
       if (state.edit.dirty) { e.preventDefault(); e.returnValue = ''; }

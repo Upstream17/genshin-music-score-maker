@@ -10,7 +10,7 @@
 做四件事：
   1. 复刻 BetterGI 的 press_intervals，拿到每个键的按下/抬起区间；
   2. 打出一整套交付指标（首音时刻、音区分布、按键数、每 10s 音符数、>2s 空档、
-     同键最小间隔、八度跳占比、最大同按）；
+     同键最小间隔、八度跳占比、最大同按（按住峰值 / 30ms 起手））；
   3. 对每条指标给 PASS / WARN / FAIL（阈值即 SKILL §0.5 的合格线）；
   4. 任一 FAIL → 退出码 1，便于脚本化门禁。
 
@@ -124,7 +124,9 @@ def analyse(path: str, expect_first: list[str] | None = None, args_mono: bool = 
     nb = int(dur_ms // 10000) + 1
     bucket = collections.Counter(int(a // 10000) * 10 for a, _, _ in on)
     per10 = [bucket.get(i * 10, 0) for i in range(nb)]
-    zeros = [i * 10 for i, c in enumerate(per10) if c == 0]
+    last_bucket = int(starts[-1] // 10000)
+    # 只判"内部"空档：末尾那个不满 10s 的桶不算（短曲会被误报，实测天路 192s 在 190s 桶为 0 -> 假 FAIL）
+    zeros = [i * 10 for i, c in enumerate(per10) if c == 0 and i <= last_bucket]
     rows.append(check("每10s音符数", per10, not zeros,
                       note=(f"★ {zeros} 秒处无音符 —— 检查是否漏了互补轨（§0.6 ②）" if zeros else "")))
 
@@ -163,15 +165,28 @@ def analyse(path: str, expect_first: list[str] | None = None, args_mono: bool = 
                       note=("单声部旋律应 ≤2%" if args_mono
                             else "多层编曲天然偏高；若 >85% 或听着像「跨排乱跳」才可疑")))
 
-    # ---- 7. 最大同按 ----
-    ev = collections.defaultdict(int)
-    for ms, kind, key in decode_events(notes_str):
-        ev[ms] += 1 if kind == "D" else -1
-    cur = mx = 0
-    for ms in sorted(ev):
-        cur += ev[ms]
-        mx = max(mx, cur)
-    rows.append(check("最大同按", mx, mx <= 5, warn=mx <= 8, note=">8 键人类/脚本都吃不消"))
+    # ---- 7. 最大同按（两个口径）----
+    # 口径①按住峰值：按区间扫描；长音叠置会把数放大（钢琴转谱常见），只报数不判定。
+    _ev = decode_events(notes_str)
+    _piv = press_intervals(_ev)
+    _pts = [(a, 1) for l in _piv.values() for a, _ in l] + [(b, -1) for l in _piv.values() for _, b in l]
+    _pts.sort(key=lambda x: (x[0], x[1]))
+    _cur = _held = 0
+    for _, _d in _pts:
+        _cur += _d
+        _held = max(_held, _cur)
+    rows.append(check("最大同按(按住峰值)", _held, None, note="长音叠置会放大，仅供参考"))
+    # 口径②30ms 内起手：真正"同时按下一组和弦"的键数，判定用。
+    # 注意跳过 '@' 占位符（它对应用里不产生按键）；旧版把它当抬起计入净减，会报成 4 而实际 13。
+    _downs = sorted(ms for ms, kind, key in _ev if kind == "D" and key != "@")
+    _att = 0
+    for _i in range(len(_downs)):
+        _j = _i
+        while _j < len(_downs) and _downs[_j] - _downs[_i] <= 30:
+            _j += 1
+        _att = max(_att, _j - _i)
+    rows.append(check("最大同按(30ms 起手)", _att, _att <= 5, warn=_att <= 8,
+                      note=">8 键人类/脚本都吃不消；长音叠置不计入"))
 
     # ---- 8. 开头音级核对（可选） ----
     if expect_first:

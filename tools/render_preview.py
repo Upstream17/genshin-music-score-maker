@@ -3,8 +3,8 @@
 """把 MidiJson 曲谱合成为音频，用于「先听再决定挂哪首」（本地预览音色，非游戏音色）。
 
 用法:
-    python render_preview.py <文件或目录> [...] --outdir <输出目录>
-    python render_preview.py "…/精选去重/起风了.json" --outdir "…/_试听音频"
+    python tools/render_preview.py <文件或目录> [...] --outdir <输出目录>
+    python tools/render_preview.py library/传奇.json --outdir output/audio
 
 原理: 21 键 → MIDI 音高 → 加性合成拨弦音（1/2/3/4/5 次谐波 + 指数衰减，低音衰得慢），
      再把所有音符按曲谱的按下时刻叠加、软限幅、归一化，写 WAV 后用 ffmpeg 转 MP3。

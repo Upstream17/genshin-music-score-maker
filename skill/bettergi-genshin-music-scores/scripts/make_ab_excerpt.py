@@ -6,13 +6,13 @@
 把有争议的时间窗**剪下来拼成一段 30 来秒**，用户一次就能听出差别（实测用户第一遍就能指出差别位置）。
 
 用法（在项目根跑）：
-    python <skill>/scripts/make_ab_excerpt.py "试听/短对照" \
-        --tools E:/HuJingwen/原神曲谱_20260921/tools \
+    python skill/bettergi-genshin-music-scores/scripts/make_ab_excerpt.py "output/短对照" \
+        --tools tools \
         --win 56000:62500 --win 88000:114000 --gap 7000 \
-        --src "1_现在就近挪=.../完整曲库/05_我的新增/九儿.json" \
-        --src "2_全往下挪=.../九儿_v4.json" \
-        --src "3_两键同按=.../九儿_v5.json"
-    python tools/render_preview.py "试听/短对照" --outdir "试听/mp3" --bitrate 64k
+        --src "1_现在就近挪=output/九儿_v1.json" \
+        --src "2_全往下挪=output/九儿_v4.json" \
+        --src "3_两键同按=output/九儿_v5.json"
+    python tools/render_preview.py "output/短对照" --outdir "output/mp3" --bitrate 64k
 然后直接把 mp3 发进聊天让用户 A/B。
 
 ⚠⚠ 时间单位：`--win` 写**毫秒**，因为 `midi_to_midijson.press_intervals()` 返回的就是毫秒。
@@ -34,7 +34,10 @@ def main():
     ap.add_argument("--src", action="append", required=True, help="标签=曲谱 JSON 路径（可多次）")
     ap.add_argument("--win", action="append", required=True, help="起:止（**毫秒**），如 56000:62500（可多次）")
     ap.add_argument("--gap", type=int, default=7000, help="两段之间留的毫秒空档（默认 7000）")
-    ap.add_argument("--tools", default=r"E:\HuJingwen\原神曲谱_20260921\tools",
+    default_tools = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "tools"))
+    if not os.path.isdir(default_tools):
+        default_tools = "tools"
+    ap.add_argument("--tools", default=default_tools,
                     help="项目 tools 目录（里面是 midi_to_midijson.py）")
     a = ap.parse_args()
     sys.path.insert(0, a.tools)
@@ -75,7 +78,7 @@ def main():
         ok, dev, pairs, miss = m2.verify_intervals(conv, ns)
         span = max(e for _, e, _ in conv)
         out = dict(name=f"{d.get('name', '')} 对照 {label}",
-                   author=d.get("author", "Hermes 转换"),
+                   author=d.get("author", "MIDI 转换"),
                    instrument=d.get("instrument", "风物之诗琴"), type="midi",
                    description=f"短对照试听（窗口 {a.win}）｜{label}｜源自 {os.path.basename(path)}",
                    time_signature=d.get("time_signature", "4/4"),

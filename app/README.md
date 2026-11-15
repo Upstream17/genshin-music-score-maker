@@ -1,20 +1,20 @@
-# 演奏台 — 原神琴谱制谱器
+# 演奏台 — Genshin Music Score Maker（原神琴谱制谱器）
 
-把 `library-private/` 里的 BetterGI 曲谱直接在浏览器里弹出来 —— **不用开原神、不用开 BetterGI**。
+把 BetterGI 21 键曲谱直接在浏览器里弹出来 —— **不用开原神、不用开 BetterGI**。
 还能用电脑键盘自己弹、就地改音符、按歌单连播。
 
 ```
-双击 app/index.html
+双击 app/index.html（本地离线）  或  访问静态部署站点（https://yuanqin.upstream.eu.cc）
 ```
 
-零依赖、零构建、零网络请求（`file://` 直开）。纸白底、墨字、单一青瓷绿强调色，纯扁平。
+零依赖、零构建。本地 `file://` 直开零网络请求；通过 `http(s)://` 静态托管访问时，自动拉取 `library/manifest.json` 加载 18 首示范曲供访客试听。纸白底、墨字、单一青瓷绿强调色，纯扁平。
 
 ---
 
 ## 1. 怎么用
 
-1. 双击 `index.html`
-2. 把 `library-private/` 文件夹**拖进页面**（会递归读全部 307 首），或点「导入曲谱 / 整个文件夹」
+1. 本地双击 `app/index.html`（或打开在线部署站点）
+2. 在线访问会自动载入 `library/` 中的 18 首示范曲；本地 `file://` 打开时把 `library/` 或你的曲谱目录**拖进页面**，或点「导入曲谱 / 整个文件夹」
 3. 点曲目 → 空格播放
 
 左栏是歌单，中间是演奏台，设置与诊断收在左栏底部「＋音色与设置」里。
@@ -111,11 +111,10 @@
 
 缺哪个音，会用最接近的采样变调顶上（不会哑掉）。加载后会出现在音色下拉里「自定义采样（本次）」。
 
-### 3.3 内置合成音色（备用）
+### 3.3 内置合成音色（公开版默认 / 备用）
 
-`windsong` / `harp` / `piano` / `musicbox` 四种，零资源可用。
-它们**排在音色列表最后并明确标注「合成（备用）」** —— 删掉所有 `samples*.js` 时的兜底，
-声音只是「像拨弦」，**不等于原神音色**。
+`audio-engine.js` 内置 `windsong` / `harp` / `piano` / `musicbox` 四种合成音色；界面下拉列表中展示 **竖琴（`harp`）/ 钢琴（`piano`）/ 音乐盒（`musicbox`）** 三项。
+在没有 `samples*.js` 的公开开源仓库或 Cloudflare 静态站上，页面会自动以内置合成音色开箱可用（默认 `竖琴`），并提示可在下方加载自定义采样文件夹。
 
 ---
 
@@ -141,8 +140,8 @@ app/
 ├── js/
 │   ├── bettergi-parse.js    三 type 解析器（window.BGIParse）
 │   ├── audio-engine.js      Web Audio 引擎 + 采样加载（window.BGIAudio）
-│   ├── samples.js           ★ 音色清单 + 默认音色（风物之诗琴，base64）
-│   ├── samples-vintage_lyre.js 等 7 个文件（其余音色，按需加载）
+│   ├── samples.js           ★ 音色清单 + 默认音色（风物之诗琴，base64；不进 git）
+│   ├── samples-vintage_lyre.js 等 6 个文件（其余 6 套音色，按需加载；不进 git）
 │   └── app.js               界面 / 调度 / 键盘弹奏 / 编辑 / 歌单
 ├── tests/
 │   ├── integration.test.js  契约 + 全库不变量
@@ -159,7 +158,7 @@ app/
 **没有构建步骤。所有 js 都是 classic script** —— 因为浏览器在 `file://` 下会拦掉
 ES module 和 `fetch`，而「双击就能用」是这个工具的核心价值。
 
-**CSS 为什么内联进 HTML**：IDE / 编辑器里的内嵌网页预览（包括 DSH 自带的那个）常常只放行
+**CSS 为什么内联进 HTML**：部分 IDE / 编辑器的内嵌网页预览常常只放行
 `<script src>`，却拦掉 `<link rel="stylesheet">`（或给它错误的 MIME），结果就是
 「页面渲染出来了、但完全没样式」。内联之后页面只剩 4 个 JS 请求，内嵌预览与双击 `file://` 都能正常显示。
 
@@ -171,10 +170,10 @@ ES module 和 `fetch`，而「双击就能用」是这个工具的核心价值�
 
 ```powershell
 node app/tests/integration.test.js            # 契约 + 全库不变量
-node app/tests/parse.test.js "完整曲库"        # 解析器全库
+node app/tests/parse.test.js library          # 解析器示范曲库（18 首）
 node app/tests/audio.test.js                  # 音频引擎
 node app/tests/realtime.test.js               # 真实时间端到端（需 Chrome）
-node app/tests/ui.test.js                     # 新功能验收（需 Chrome）
+node app/tests/ui.test.js                     # 音色 / 键盘弹奏 / 编辑 / 连播（需 Chrome）
 ```
 
 浏览器里按 F12 可跑 `BGIParse.selfTest()` / `BGIAudio.selfTest()`。
@@ -184,10 +183,10 @@ node app/tests/ui.test.js                     # 新功能验收（需 Chrome）
 | 测试 | 结果 |
 |---|---|
 | `integration.test.js` | **62 PASS / 0 FAIL** |
-| `parse.test.js` | **307/307 解析成功**，321,330 音符，不变量 0 违反，selfTest 53/0 |
+| `parse.test.js library` | **18/18 解析成功**，20,551 音符，不变量 0 违反，selfTest 53/0 |
 | `audio.test.js` | **165 PASS / 0 FAIL / 3 SKIP**（skip 均为「Node 无 AudioContext」） |
 | `realtime.test.js` | **32 PASS / 0 FAIL** |
-| `ui.test.js` | **24 PASS / 0 FAIL** |
+| `ui.test.js` | **62 PASS / 0 FAIL** |
 
 关键实测：
 

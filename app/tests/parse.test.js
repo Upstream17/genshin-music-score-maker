@@ -3,7 +3,7 @@
  * app/tests/parse.test.js —— BetterGI 曲谱解析器全库测试（Node，零依赖）
  *
  * 用法：
- *   node app/tests/parse.test.js "library-private"
+ *   node app/tests/parse.test.js "library"
  *
  * 做四件事：
  *   1. 递归遍历 <dir> 下所有 .json，逐个交给 BGIParse.parseScore；
@@ -65,7 +65,7 @@ try {
  * 参数与文件遍历
  * ------------------------------------------------------------------ */
 
-const dirArg = process.argv[2] || 'library-private';
+const dirArg = process.argv[2] || 'library';
 const ROOT = path.resolve(process.cwd(), dirArg);
 
 if (!fs.existsSync(ROOT) || !fs.statSync(ROOT).isDirectory()) {

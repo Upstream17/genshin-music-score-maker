@@ -27,7 +27,7 @@ const CHROME_CANDIDATES = [
 
 const PLAYER = path.resolve(__dirname, '..');
 const PORT = 9333 + (process.pid % 200);
-const SCORE_REL = '01_原琴JSON/小星星 - 20i9ia3Z.json';
+const SCORE_REL = '传奇.json';
 
 let PASS = 0, FAIL = 0;
 function ok(name, cond, detail) {
@@ -311,7 +311,7 @@ function pageScript(scoreUrl) {
   if (!chrome) { console.error('找不到 Chrome/Edge，无法做真实时间验证'); process.exit(2); }
   console.log('浏览器: ' + chrome);
 
-  const userDir = path.join(os.tmpdir(), 'dsh-cdp-' + Date.now());
+  const userDir = path.join(os.tmpdir(), 'bgi-cdp-' + Date.now());
   const proc = spawn(chrome, [
     '--headless=new',
     '--disable-gpu',
@@ -344,7 +344,7 @@ function pageScript(scoreUrl) {
     await cdp.send('Network.enable');
 
     const indexUrl = require('url').pathToFileURL(path.join(PLAYER, 'index.html')).href;
-    const scoreUrl = require('url').pathToFileURL(path.join(PLAYER, '..', 'library-private', SCORE_REL)).href;
+    const scoreUrl = require('url').pathToFileURL(path.join(PLAYER, '..', 'library', SCORE_REL)).href;
     console.log('页面: ' + indexUrl);
     console.log('曲谱: ' + SCORE_REL);
 

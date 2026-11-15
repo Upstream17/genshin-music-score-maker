@@ -10,8 +10,8 @@
      · 先导入一首真实曲谱（甚至播放 N 毫秒）再截
    用法：
      node app/tests/screenshot.js out.png
-     node app/tests/screenshot.js out.png --score=01_原琴JSON/小星星 - 20i9ia3Z.json
-     node app/tests/screenshot.js out.png --score=01_原琴JSON/小星星 - 20i9ia3Z.json --play=2600
+     node app/tests/screenshot.js out.png --score=传奇.json
+     node app/tests/screenshot.js out.png --score=传奇.json --play=2600
    可选：--w=1440 --h=900 --wait=1000
    ========================================================================== */
 'use strict';
@@ -112,7 +112,7 @@ function driveScript(scoreUrl) {
   const chrome = CHROME_CANDIDATES.find((p) => fs.existsSync(p));
   if (!chrome) { console.error('找不到 Chrome/Edge'); process.exit(2); }
 
-  const userDir = path.join(os.tmpdir(), 'dsh-shot-' + Date.now());
+  const userDir = path.join(os.tmpdir(), 'bgi-shot-' + Date.now());
   const proc = spawn(chrome, [
     '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
     '--no-default-browser-check', '--mute-audio',
@@ -164,7 +164,7 @@ function driveScript(scoreUrl) {
 
     if (scoreRel) {
       const scoreUrl = require('url').pathToFileURL(
-        path.join(PLAYER, '..', 'library-private', scoreRel)
+        path.join(PLAYER, '..', 'library', scoreRel)
       ).href;
       const r = await cdp.send('Runtime.evaluate', {
         expression: driveScript(scoreUrl), awaitPromise: true, returnByValue: true

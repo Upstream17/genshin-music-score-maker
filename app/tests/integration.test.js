@@ -7,7 +7,7 @@
    把它们跑起来，然后：
      1) 校验接口契约 v1 的成员是否齐全、类型是否正确；
      2) 跑它们各自的 selfTest()；
-     3) 用解析器扫全库 `library-private`，校验不变量（start<end、pitch∈[48,83]、key∈21键）
+     3) 用解析器扫示范曲库 `library`，校验不变量（start<end、pitch∈[48,83]、key∈21键）
         并输出汇总。
    用法：
      node app/tests/integration.test.js                 # 用默认曲库路径
@@ -95,7 +95,7 @@ function walkJson(dir, out, limit) {
   for (const e of entries) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) {
-      if (e.name === 'archive' || e.name === 'publicsource' || e.name === 'node_modules') continue;
+      if (e.name === 'node_modules') continue;
       walkJson(p, out, limit);
     } else if (/\.json$/i.test(e.name)) {
       out.push(p);
@@ -223,7 +223,7 @@ if (P.error) {
 
     /* 全库扫描 */
     const libArg = process.argv[2];
-    const libDir = libArg ? path.resolve(libArg) : path.join(PROJECT, 'library-private');
+    const libDir = libArg ? path.resolve(libArg) : path.join(PROJECT, 'library');
     if (!fs.existsSync(libDir)) {
       skip('全库扫描', '目录不存在: ' + libDir);
     } else if (typeof API.parseScore !== 'function') {
@@ -374,7 +374,7 @@ const htmlPath = path.join(PLAYER, 'index.html');
 const html = fs.existsSync(htmlPath) ? fs.readFileSync(htmlPath, 'utf8') : null;
 ok('index.html 存在', !!html);
 if (html) {
-  /* CSS 必须内联：DSH 之类内嵌预览器会拦外部样式表（实测 <script src> 放行、<link rel=stylesheet> 不生效） */
+  /* CSS 必须内联：部分内嵌网页预览器会拦外部样式表（实测 <script src> 放行、<link rel=stylesheet> 不生效） */
   ok('样式已内联（<style> 块足够大）', /<style>[\s\S]{2000,}<\/style>/.test(html));
   ok('不再依赖外部样式表', html.indexOf('rel="stylesheet"') < 0);
   ['js/bettergi-parse.js', 'js/audio-engine.js', 'js/app.js'].forEach(rel => {

@@ -20,33 +20,23 @@ MIDI(.mid) -> BetterGI `type:"midi"` JSON 转换器
   3. 输出 `type:"midi"` 事件流：ticks=1000 & bpm=60 -> **1 tick = 1 ms**，零漂移
   4. 校验：用 Python 复刻的 ParseMidiJsonTimeline 重放结果，事件数与时长必须对得上
 用法：
-    python midi_to_midijson.py                 # 全部转换（snap 模式）
-    python midi_to_midijson.py --mode drop     # 只看原行为
-    python midi_to_midijson.py --transpose 12  # 整体升八度
+    python tools/midi_to_midijson.py song.mid --outdir output
+    python tools/midi_to_midijson.py midi_dir/ --mode snap --outdir output
+    python tools/midi_to_midijson.py song.mid --transpose 12 --outdir output
 """
 import os, sys, re, json, csv, struct, collections, argparse
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(_HERE) if os.path.basename(_HERE) == "tools" else _HERE
-REPORTS = os.path.join(ROOT, "reports")
-def _pick(*ps):
-    for p in ps:
-        if os.path.isdir(p):
-            return p
-    return ps[0]
+OUT = os.path.join(ROOT, "output")
 
-
-ARCH = os.path.join(ROOT, "archive", "中间产物")
-LIB = _pick(os.path.join(ARCH, "去重后曲库"), os.path.join(ROOT, "去重后曲库"))
-OUT = _pick(os.path.join(ARCH, "8_MIDI转换_MidiJson"), os.path.join(ROOT, "8_MIDI转换_MidiJson"))
-
-# BetterGI 风物之诗琴 21 键映射（键 -> MIDI 音高）
+# BetterGI 21 键映射（键 -> MIDI 音高）
 KEYMAP = {48: "Z", 50: "X", 52: "C", 53: "V", 55: "B", 57: "N", 59: "M",
           60: "A", 62: "S", 64: "D", 65: "F", 67: "G", 69: "H", 71: "J",
           72: "Q", 74: "W", 76: "E", 77: "R", 79: "T", 81: "Y", 83: "U"}
 LO, HI = min(KEYMAP), max(KEYMAP)
 SCALE = {0, 2, 4, 5, 7, 9, 11}          # C 大调音级
-TAG = "（Hermes）"                        # 我方产物标签：只标归属，不塞产物类型信息
+TAG = ""
 JSON_TICKS, JSON_BPM = 1000, 60         # => 1 tick = 1 ms
 MIN_NOTE_MS = 30                        # 与 BetterGI LowestLatencyMilliseconds 对齐
 _PART_RE = re.compile(r"^([DU])([A-Z@]+)(\d+)$")
@@ -418,18 +408,30 @@ def verify_intervals(intervals, notes_str, tol_ms=2.0):
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="将 .mid/.midi 批量转换为 BetterGI type:midi JSON")
+    ap.add_argument("inputs", nargs="+", help=".mid/.midi 文件或目录")
     ap.add_argument("--mode", choices=["snap", "drop", "raw"], default="snap")
     ap.add_argument("--transpose", type=int, default=0)
     ap.add_argument("--outdir", default=OUT)
+    ap.add_argument("--report", default="", help="可选 CSV 报告输出路径")
     a = ap.parse_args()
     os.makedirs(a.outdir, exist_ok=True)
 
+    mid_files = []
+    for p in a.inputs:
+        if os.path.isdir(p):
+            for fn in sorted(os.listdir(p)):
+                if fn.lower().endswith((".mid", ".midi")):
+                    mid_files.append(os.path.join(p, fn))
+        elif os.path.isfile(p):
+            mid_files.append(p)
+
     rows, ok, fail = [], 0, 0
-    for fn in sorted(f for f in os.listdir(LIB) if f.lower().endswith((".mid", ".midi"))):
-        name = os.path.splitext(fn)[0].replace("\ufffd", "")   # 源仓库有乱码文件名，统一清掉
+    for fp in mid_files:
+        fn = os.path.basename(fp)
+        name = os.path.splitext(fn)[0].replace("\ufffd", "")
         try:
-            m = parse_smf(os.path.join(LIB, fn))
+            m = parse_smf(fp)
             intervals, st = convert(m["notes"], a.mode, a.transpose)
             notes_str, events = to_midijson(intervals)
             if not events:
@@ -438,7 +440,7 @@ def main():
             okv, dev, pairs, miss = verify_intervals(intervals, notes_str)
             obj = {
                 "name": name + TAG,
-                "author": f"Hermes｜MIDI 转换（{a.mode} 模式）",
+                "author": f"MIDI 转换（{a.mode} 模式）",
                 "instrument": "风物之诗琴",
                 "type": "midi",
                 "description": (f"由 MIDI 转换：原音符 {st['total']}，可演奏 {st['mapped']}，"
@@ -463,15 +465,16 @@ def main():
         except Exception as e:
             rows.append([name, "失败", str(e)]); fail += 1
 
-    with open(os.path.join(REPORTS, "midi转换报告.csv"), "w", newline="", encoding="utf-8-sig") as f:
-        w = csv.writer(f)
-        w.writerow(["曲名", "结果", "原音符数", "可演奏数", "原可演奏率", "转换后可演奏率",
-                    "八度折叠数", "半音吸附↑", "半音吸附↓", "同键合并", "重新击键", "重击间隔修正",
-                    "最大同时按键",
-                    "原时长", "转换后跨度", "校验最大偏差ms"])
-        w.writerows(rows)
+    if a.report:
+        with open(a.report, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.writer(f)
+            w.writerow(["曲名", "结果", "原音符数", "可演奏数", "原可演奏率", "转换后可演奏率",
+                        "八度折叠数", "半音吸附↑", "半音吸附↓", "同键合并", "重新击键", "重击间隔修正",
+                        "最大同时按键",
+                        "原时长", "转换后跨度", "校验最大偏差ms"])
+            w.writerows(rows)
+        print(f"[MIDI→JSON] 报告 {a.report}")
     print(f"[MIDI→JSON] 模式={a.mode} 成功 {ok} / 失败 {fail} -> {a.outdir}")
-    print(f"[MIDI→JSON] 报告 {os.path.join(REPORTS,'midi转换报告.csv')}")
 
 
 if __name__ == "__main__":

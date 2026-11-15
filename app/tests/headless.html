@@ -85,14 +85,10 @@
   }
 
   var REAL_FILES = [
-    ['01_原琴JSON/小星星 - 20i9ia3Z.json', 'yuanqin'],
-    ['01_原琴JSON/关键词 - 3A1TeP33.json', 'yuanqin(缺 type + @ 休止)'],
-    ['01_原琴JSON/Counting Stars - 6dKMtoRQ.json', 'keyboard'],
-    ['01_原琴JSON/剑决浮云 - VXTUdfzz.json', 'yuanqin(整篇小写键)'],
-    ['01_原琴JSON/永夜的悼挽 - cYAsIpo2.json', 'midi(含 * 变速标记)'],
-    ['05_我的新增/传奇.json', 'midi(含 @ 占位)'],
-    ['04_MIDI-21键适配JSON/紫罗兰永恒花园 - Sincerely.json', 'midi(全库最长 8013 事件)'],
-    ['01_原琴JSON/卡农 - 7BRsrJmI.json', 'midi(含非法键 K，会产生 warning)']
+    ['传奇.json', 'midi'],
+    ['茉莉花.json', 'midi'],
+    ['月亮代表我的心.json', 'midi'],
+    ['You Raise Me Up.json', 'midi']
   ];
 
   /* ====================== 主流程 ====================== */
@@ -133,7 +129,7 @@
       var parsed = [];
       for (var i = 0; i < REAL_FILES.length; i++) {
         var rel = REAL_FILES[i][0], kind = REAL_FILES[i][1];
-        var url = '../../完整曲库/' + encodeURI(rel);
+        var url = '../../library/' + encodeURI(rel);
         try {
           var txt = await xhrText(url);
           var obj = JSON.parse(txt);
@@ -221,7 +217,7 @@
       if (!target) {
         skipped('UI 端到端', '前面没有成功解析出样例');
       } else {
-        var rawText = await xhrText('../../完整曲库/' + encodeURI(target.rel));
+        var rawText = await xhrText('../../library/' + encodeURI(target.rel));
         var file = new File([rawText], target.rel.split('/').pop(), { type: 'application/json' });
         var dt = new DataTransfer();
         dt.items.add(file);

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-fetch_samples.py — 下载 8 种乐器的 21 音采样并生成 app/js/samples*.js
+fetch_samples.py — 下载游戏乐器 21 音采样并生成 app/js/samples*.js
 ======================================================================
 为什么要有这个脚本：游戏音频的版权归 miHoYo，**不能随仓库分发**。
 所以仓库里没有采样文件；想在本机听到真实音色，跑一次这个脚本即可，
@@ -43,7 +43,7 @@ INSTRUMENTS = [
     'harmonic_key', 'leaping_spirit_piano', 'ukulele', 'lingering_euphonia',
 ]
 
-UA = {'User-Agent': 'Mozilla/5.0 (compatible; lyre-score-maker/1.0)'}
+UA = {'User-Agent': 'Mozilla/5.0 (compatible; genshin-music-score-maker/1.0)'}
 
 
 def fetch(url, dest, tries=4):

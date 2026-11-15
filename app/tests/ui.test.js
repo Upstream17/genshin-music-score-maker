@@ -431,7 +431,7 @@ function pageScript(scoreUrls) {
 
 (async function main() {
   if (!CHROME) { console.error('找不到 Chrome/Edge'); process.exit(2); }
-  const userDir = path.join(os.tmpdir(), 'dsh-ui-' + Date.now());
+  const userDir = path.join(os.tmpdir(), 'bgi-ui-' + Date.now());
   const proc = spawn(CHROME, [
     '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
     '--no-default-browser-check', '--mute-audio',
@@ -443,7 +443,7 @@ function pageScript(scoreUrls) {
     'about:blank'
   ], { stdio: 'ignore' });
 
-  let cdp = null, exitCode = 1;
+  let cdp = null, exitCode = 1, fixtureDir = '';
   try {
     const t0 = Date.now();
     let up = false;
@@ -472,13 +472,27 @@ function pageScript(scoreUrls) {
     }
     await sleep(800);
 
-    const scoreUrls = [
-      '01_原琴JSON/小星星 - 20i9ia3Z.json',
-      '04_MIDI-21键适配JSON/紫阳花 - test.json'
-    ];
-    /* 第二首换成必定存在的文件 */
-    const pumps = ['01_原琴JSON/小星星 - 20i9ia3Z.json', '01_原琴JSON/卡农 - 7BRsrJmI.json'];
-    const urls = pumps.map(p => url.pathToFileURL(path.join(PLAYER, '..', 'library-private', p)).href);
+    fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bgi-ui-fixtures-'));
+    const mkNotes = (key, count) => {
+      const ev = [];
+      for (let i = 0; i < count; i++) {
+        ev.push('D' + key + (i === 0 ? 0 : 100));
+        ev.push('U' + key + 400);
+      }
+      return ev.join('|');
+    };
+    const fStar = path.join(fixtureDir, '小星星.json');
+    const fCanon = path.join(fixtureDir, '卡农.json');
+    fs.writeFileSync(fStar, JSON.stringify({
+      name: '小星星', author: '测试样例', type: 'midi', bpm: '60', ticks: '1000',
+      notes: mkNotes('G', 24)
+    }), 'utf8');
+    fs.writeFileSync(fCanon, JSON.stringify({
+      name: '卡农', author: '测试样例', type: 'midi', bpm: '60', ticks: '1000',
+      notes: mkNotes('D', 24)
+    }), 'utf8');
+    const fixtureFiles = [fStar, fCanon];
+    const urls = fixtureFiles.map(p => url.pathToFileURL(p).href);
 
     console.log('=== 新功能验收（真实时间 CDP）===');
     const res = await cdp.send('Runtime.evaluate', {
@@ -493,7 +507,7 @@ function pageScript(scoreUrls) {
     }
 
     /* ───────── 9. 原生 OS 拖放导入验收（验证非 fileInput 的真实 DragEvent） ───────── */
-    const dragScorePath = path.join(PLAYER, '..', 'library-private', pumps[0]);
+    const dragScorePath = fixtureFiles[0];
     await cdp.send('Input.dispatchDragEvent', {
       type: 'dragEnter', x: 400, y: 400,
       data: { items: [], files: [dragScorePath], dragOperationsMask: 1 }
@@ -525,6 +539,7 @@ function pageScript(scoreUrls) {
     try { proc.kill(); } catch (_) { }
     await sleep(300);
     try { fs.rmSync(userDir, { recursive: true, force: true }); } catch (_) { }
+    try { if (typeof fixtureDir === 'string') fs.rmSync(fixtureDir, { recursive: true, force: true }); } catch (_) { }
   }
 
   console.log('\n' + '='.repeat(50));

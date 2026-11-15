@@ -1,12 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""MidiJson 整体平移（默认降八度 −12）：用于把光遇来源的曲子搬进原神的低音区。
+"""MidiJson 整体平移（默认降八度 −12）：把偏高八度的谱面搬进含低音区（C3–B5）。
 
-为什么需要它（背景）：
-    光遇 15 键乐器音域 = C4–C6(60–84)，**最低音就是 C4**；原神风物之诗琴 21 键 = C3–B5(48–83)。
-    两边零重叠 → 光遇的谱子转过来**一个低音键（Z X C V B N M）都不会有**，听感「全飘在高音」。
-    把整首**降八度**（−12）→ C3–C5，正好落进原神音域，且**零折叠零吸附**
-    （连原来「最高音 C6 折下八度」的问题也一并消失），低音键随即被用上。
+为什么需要它：
+    部分高音区编曲主要落在 C4–C6，**一个低音键（Z X C V B N M）都没有**，听感容易偏飘。
+    把整首**降八度**（−12）→ C3–C5，正好落进原神 21 键低音+中音区，且不破坏 C 大调音阶结构。
 
 为什么平移而不是重转：
     只允许 ±12（换别的半音数会破坏 C 大调 → 出现变化音、被吸附成错音）。
@@ -118,8 +116,7 @@ def convert_file(path, outdir, semis, rel):
 
     j["notes"] = new
     j["description"] = ((str(j.get("description") or "").rstrip("｜|"))
-                        + f"｜低音版：整体降八度（{semis} 半音），光遇 C4–C6 → 原神 C3–C5，"
-                          f"零折叠零吸附；低音键 {olow} → {nlow}")
+                        + f"｜整体移调（{semis} 半音）：零折叠零吸附；低音键 {olow} → {nlow}")
     outp = os.path.join(outdir, rel)
     os.makedirs(os.path.dirname(outp), exist_ok=True)
     with open(outp, "w", encoding="utf-8") as f:
