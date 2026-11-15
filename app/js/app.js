@@ -55,13 +55,13 @@
       'btnStepBack', 'btnStepFwd',
       'speed', 'speedVal', 'loop', 'autoplay', 'btnPlayMode', 'playModeLabel',
       'tNow', 'tTotal', 'seek', 'seekWrap', 'seekFill', 'seekThumb',
-      'keyboard', 'playKeys', 'playHint', 'btnRecord', 'btnRecordLabel',
+      'keyboard', 'btnPlayKeys', 'playHint', 'btnRecord', 'btnRecordLabel',
       'btnHelp', 'helpModal', 'btnHelpClose',
       'modePlay', 'modeEdit',
       'editBar', 'editInfo', 'btnTimeLeft', 'btnTimeRight', 'btnPitchDown', 'btnPitchUp',
       'btnDurDown', 'btnDurUp', 'btnDel', 'btnRippleCut', 'btnInsertGap', 'btnDeselect', 'editSnap',
       'btnEditUndo', 'btnEditReset', 'btnEditExport',
-      'roll', 'rollHint', 'zoom', 'zoomVal', 'btnFitAll',
+      'roll', 'rollHint', 'zoom', 'zoomVal',
       'instrument', 'volume', 'btnLoadSamples', 'sampleInput', 'sampleStat',
       'diag', 'liveText', 'toast'
     ].forEach(function (id) { el[id] = document.getElementById(id); });
@@ -3127,11 +3127,14 @@
       if (el.autoplay.checked) setPlayMode('list');
       else setPlayMode(el.loop.checked ? 'single' : 'order');
     });
-    el.playKeys.addEventListener('change', function () {
-      state.playKeys = el.playKeys.checked;
-      if (!state.playKeys) { state.heldKeys = {}; }
-      scheduleSaveWorkspace();
-    });
+    if (el.btnPlayKeys) {
+      el.btnPlayKeys.addEventListener('click', function () {
+        state.playKeys = !state.playKeys;
+        if (!state.playKeys) { state.heldKeys = {}; }
+        updatePlayKeysBtn();
+        scheduleSaveWorkspace();
+      });
+    }
 
     el.seek.addEventListener('pointerdown', function () { state.seeking = true; });
     el.seek.addEventListener('input', function () {
@@ -3144,12 +3147,6 @@
 
     el.zoom.addEventListener('input', function () {
       state.viewSec = parseInt(el.zoom.value, 10);
-      el.zoomVal.textContent = state.viewSec + ' 秒';
-    });
-    el.btnFitAll.addEventListener('click', function () {
-      if (!state.current) return;
-      state.viewSec = clamp(Math.round(duration() / 1000), 3, 24);
-      el.zoom.value = state.viewSec;
       el.zoomVal.textContent = state.viewSec + ' 秒';
     });
 
@@ -3467,6 +3464,12 @@
     updateTrackNav();
   }
 
+  function updatePlayKeysBtn() {
+    if (!el.btnPlayKeys) return;
+    el.btnPlayKeys.classList.toggle('is-on', !!state.playKeys);
+    el.btnPlayKeys.setAttribute('aria-pressed', state.playKeys ? 'true' : 'false');
+  }
+
   function init() {
     cacheDom();
 
@@ -3495,7 +3498,7 @@
     el.speedVal.textContent = state.speed.toFixed(2) + '×';
     el.zoomVal.textContent = state.viewSec + ' 秒';
     setPlayMode(prefs.playMode || 'list');
-    el.playKeys.checked = state.playKeys;
+    updatePlayKeysBtn();
 
     renderList();
     updateTrackNav();

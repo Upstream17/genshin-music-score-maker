@@ -141,13 +141,11 @@ function pageScript(scoreUrls) {
     ok('松开后该键熄灭（--e=' + energy().toFixed(2) + '）', energy() < 0.1, String(energy()));
 
     /* 关闭键盘弹奏后按键不再发声 */
-    $('#playKeys').checked = false;
-    $('#playKeys').dispatchEvent(new Event('change'));
+    $('#btnPlayKeys').click();
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'q', code: 'KeyQ', bubbles: true }));
     await sleep(150);
-    ok('关闭「键盘弹奏」后按键不再触发', energy() < 0.2, String(energy()));
-    $('#playKeys').checked = true;
-    $('#playKeys').dispatchEvent(new Event('change'));
+    ok('关闭「键盘」后按键不再触发', !$('#btnPlayKeys').classList.contains('is-on') && energy() < 0.2, String(energy()));
+    $('#btnPlayKeys').click();
     document.dispatchEvent(new KeyboardEvent('keyup', { key: 'q', code: 'KeyQ', bubbles: true }));
 
     /* ───────── 3. 导入两首（供歌单与编辑） ───────── */

@@ -753,6 +753,11 @@ html, body {
 .btn-rec.is-rec .rec-dot {
   background: var(--danger);
 }
+.btn-toggle.is-on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
 .select-xs {
   max-width: 72px;
   height: 23px;
@@ -1132,10 +1137,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
         <div class="roll-head" id="editBar">
           <div class="roll-head-left">
             <span class="label">音符</span>
-            <label class="check check-sm" title="允许使用键盘 QWERTYU / ASDFGHJ / ZXCVBNM 弹奏琴键">
-              <input type="checkbox" id="playKeys" checked>
-              <i></i><span>键盘弹奏</span>
-            </label>
+            <button id="btnPlayKeys" class="btn btn-xs btn-toggle is-on" type="button" aria-pressed="true" title="允许使用键盘 QWERTYU / ASDFGHJ / ZXCVBNM 弹奏琴键">键盘</button>
             <button id="btnRecord" class="btn btn-xs btn-rec" type="button" title="开启键盘录制：边播放边弹奏实时录入旋律，按住琴键随时间轴后移实时拉长音符">
               <i class="rec-dot"></i><span id="btnRecordLabel">录制</span>
             </button>
@@ -1182,7 +1184,6 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
               <span class="mini-label">窗口</span>
               <input type="range" id="zoom" min="3" max="24" step="1" value="8">
               <span class="mini-val" id="zoomVal">8 秒</span>
-              <button id="btnFitAll" class="btn btn-xs">全曲</button>
             </div>
           </div>
         </div>
