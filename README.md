@@ -2,8 +2,7 @@
 
 一套面向 **原神 21 键乐器（兼容 BetterGI 自动弹奏 `midi` JSON 规范）** 的开源制谱工作流与网页预览编辑台：
 
-- **AI 制谱与编配工作流（`skill/`）**：沉淀多轨 MIDI 旋律抽取、判调移调、织体缩编、局部微调与交付前硬校验方法论——下载一首 `.mid`，交给 AI 即可结合工具链产出高质量 21 键谱面。
-- **MIDI 转谱工具链（`tools/`）**：专注于 **`.mid` / `.midi` → 21 键 `midi` JSON** 转换、整体移调、本地试听渲染与强校验。
+- **AI 制谱 Skill 工具包（`skills/genshin-music-scores/`）**：自包含全部 `.mid` / `.midi` → 21 键 `midi` JSON 工具与编配方法论（分析、转换、移调、试听渲染、交付验收全收于一套统一工具）——下载一首 `.mid`，交给 AI 即可产出高质量 21 键谱面。
 - **网页预览与编辑台（`app/`）**：零依赖、无构建的浏览器端播放器与卷帘编辑器，支持多音色试听、键盘弹奏/录制、音符精细编辑与 BetterGI JSON 导出；支持本地双击打开或部署到 Cloudflare 静态托管（在线地址：`https://yuanqin.upstream.eu.cc`）。
 
 > 非官方个人工具，与 miHoYo / HoYoverse、与 BetterGI 开发者均无隶属关系。
@@ -39,23 +38,23 @@
 - **变速 0.5×–2×（不变调）**、列表循环 / 单曲循环 / 顺序播放
 - **键盘弹奏与录制**：支持 `QWERTYU` / `ASDFGHJ` / `ZXCVBNM` 实时弹奏及按住录制
 - **音符编辑**：点击落音、增删音符、改音高/时值、撤销、**导出 BetterGI JSON**
-- **多乐器与多音色**：公开网页版开箱内置 **3 种 WebAudio 合成音色（竖琴 / 钢琴 / 音乐盒）** 并支持**导入自定义采样文件夹**；本机也可按需运行 `tools/fetch_samples.py` 生成 7 套游戏采样在本地离线切换
+- **多乐器与多音色**：公开网页版开箱内置 **3 种 WebAudio 合成音色（竖琴 / 钢琴 / 音乐盒）** 并支持**导入自定义采样文件夹**；本机也可按需运行 `app/scripts/fetch_samples.py` 生成 7 套游戏采样在本地离线切换
 
 ### B. 有一首 MIDI 想转成原琴谱子
 
 **方式一：AI 驱动编配与微调（推荐，日常主力工作流）**
 
-把 `skill/bettergi-genshin-music-scores/` 加载为 AI 助手的 Skill，直接发一首 `.mid` 文件给 AI：
+把 `skills/genshin-music-scores/` 加载为 AI 助手的 Skill（或直接在仓库根目录呼出 AI），发一首 `.mid` 文件给它：
 
-1. AI 会先运行结构扫描与音轨分析脚本（`scan_midi_structure.py`、`list_midi_gm_tracks.py`）评估调性与主旋律；
-2. 根据曲风自动确定移调、抽轨、和弦裁剪或局部八度微调方案，调用转换与强校验工具输出 JSON；
-3. 生成后可直接在 `app/` 演奏台试听或 `render_preview.py` 导出试听音频，并按 `verify_delivery.py` 完成验收。
+1. AI 会先用 `score_cli.py inspect` 一次分析音轨角色、调性与移调候选；
+2. 简单曲目直接用 `score_cli.py convert`，复杂曲目自动编写单曲 Python 微调脚本并复用 `midi_to_midijson` 引擎与强校验；
+3. 交付前用 `score_cli.py verify` 完成硬验收，然后拖进 `app/` 演奏台试听（或用 `excerpt` + `preview` 对比局部分歧）。
 
 **方式二：命令行直接转换单曲 / 目录**
 
 ```bash
-python tools/add_songs.py "path/to/song.mid" --name "曲名" --outdir output
-# → output/曲名.json（默认输出到 ./output/，附带音轨统计与解析器强校验）
+python skills/genshin-music-scores/scripts/score_cli.py convert "path/to/song.mid" --name "曲名" --verify --outdir output
+# → output/曲名.json（支持 --transpose / --tracks / --melody-only / --trim-start / --max-keys）
 ```
 
 ---
@@ -64,29 +63,30 @@ python tools/add_songs.py "path/to/song.mid" --name "曲名" --outdir output
 
 ```
 .
-├── app/                  ★ 网页演奏台与编辑台（零依赖、无构建；支持本地双击或静态托管）
-│   ├── index.html        （CSS 已内联；classic script 直接加载）
-│   ├── js/               解析器 / 音频引擎 / 界面（本地可选启用 samples*.js，不进 git）
-│   └── tests/            5 套自动化测试 + 截图工具 + 采样生成器
-├── skill/                ★ AI 驱动 MIDI → 21 键 JSON 编配与验收 Skill（方法论与分析脚本）
-├── tools/                MIDI 转换、整体移调、试听渲染与静态站构建工具
-├── library/              ★ 人工挑选的成品示范曲库（18 首，供工具演示与网页端在线试听）
-├── LICENSE               GPL-3.0
-└── NOTICE.md             ★ 来源与版权声明，开源前必读
+├── skills/genshin-music-scores/  ★ 自包含 AI 制谱工具包（Skill + 统一 CLI + 核心引擎 + 参考手册）
+│   ├── SKILL.md
+│   ├── scripts/                  score_cli.py / midi_to_midijson.py / inspect_midi.py / verify_score.py / audio_preview.py
+│   └── references/               多轨抽取 / 转调改编 / 局部外科手术指南
+├── app/                          ★ 网页演奏台与编辑台（零依赖、无构建；支持本地双击或静态托管）
+│   ├── index.html                （CSS 已内联；classic script 直接加载）
+│   ├── js/                       解析器 / 音频引擎 / 界面（本地可选启用 samples*.js，不进 git）
+│   ├── scripts/                  网页工程脚本（build_site.py 构建静态站 / fetch_samples.py 拉取可选采样）
+│   └── tests/                    5 套自动化测试 + 截图工具 + 采样生成器
+├── library/                      ★ 人工挑选的成品示范曲库（18 首，供工具演示与网页端在线试听）
+├── LICENSE                       GPL-3.0
+└── NOTICE.md                     ★ 来源与版权声明，开源前必读
 ```
 
 ---
 
-## 工具一览
+## 命令行工具一览
 
-| 脚本 | 作用 |
+| 入口 / 模块 | 作用 |
 |---|---|
-| `tools/midi_to_midijson.py` | **核心转换器**：`.mid` → `type:"midi"` JSON（自带 SMF 解析、折叠/吸附、强校验） |
-| `tools/add_songs.py` | **MIDI 单曲/批量转换**：支持 `--list-tracks`、`--tracks`、`--melody-only`、`--transpose`、`--max-keys` 与自定义输出目录 |
-| `tools/transpose_midijson.py` | **整体移调**：对 21 键 `midi` JSON 做八度/半音平移并过三道强校验 |
-| `tools/render_preview.py` | **音频预览**：把 `midi` JSON 合成为 mp3/wav 试听音频（合成音色） |
-| `tools/fetch_samples.py` | **可选本机采样**：从开源模拟器仓库下载并生成本地 `app/js/samples*.js`（仅限本地自用，不随仓库分发） |
-| `tools/build_site.py` | **构建静态站**：打包 `app/` 与 `library/` 到 `site/`（生成 `library/manifest.json`，适配 Cloudflare 托管） |
+| `skills/.../scripts/score_cli.py` | **统一制谱 CLI**：集成 `inspect`（轨与调性诊断）/ `convert`（转换）/ `transpose`（整体移调）/ `verify`（硬验收与区外零改动证明）/ `excerpt`（A/B 剪辑）/ `preview`（MP3 预览） |
+| `skills/.../scripts/midi_to_midijson.py` | **核心引擎 & Python SDK**：唯一 SMF 解析、21 键映射、D/U 防漂移序列化与 `verify_intervals` 强校验 |
+| `app/scripts/fetch_samples.py` | **可选本机采样**：从开源模拟器仓库下载并生成本地 `app/js/samples*.js`（仅限本地自用，不随仓库分发） |
+| `app/scripts/build_site.py` | **构建静态站**：打包 `app/` 与 `library/` 到 `site/`（生成 `library/manifest.json`，适配 Cloudflare 托管） |
 
 ---
 

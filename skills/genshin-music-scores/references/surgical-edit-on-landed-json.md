@@ -33,7 +33,7 @@ SyntaxError，实测为此白跑了 3 轮。**用 `write_file` 写脚本文件�
 
 ```python
 import io, json, sys
-sys.path.insert(0, r"<项目>\tools"); import midi_to_midijson as m2
+sys.path.insert(0, "skills/genshin-music-scores/scripts"); import midi_to_midijson as m2
 REV = {v: k for k, v in m2.KEYMAP.items()}
 
 d0 = json.load(io.open(当前曲库JSON, encoding="utf-8"))
@@ -85,7 +85,7 @@ for a, b in gaps:
 **⑤ 证明区外零改动**（跑脚本，别手算）：
 
 ```
-python <skill>/scripts/diff_press_intervals.py 旧.json 新.json --tools <项目>/tools \
+python skills/genshin-music-scores/scripts/score_cli.py verify 新.json --diff-base 旧.json \
     --windows 115.5-117.3,138.0-141.0
 ```
 

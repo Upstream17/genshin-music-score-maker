@@ -8,13 +8,13 @@
 - library/*.json 示范曲库与 library/manifest.json（供网页端开箱试听）
 
 用法：
-    python tools/build_site.py
+    python app/scripts/build_site.py
 """
 import json
 import os
 import shutil
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP_DIR = os.path.join(ROOT, "app")
 LIB_DIR = os.path.join(ROOT, "library")
 OUT_DIR = os.path.join(ROOT, "site")

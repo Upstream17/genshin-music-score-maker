@@ -27,5 +27,5 @@
 ## 自己生成新曲目
 
 ```bash
-python tools/add_songs.py "path/to/song.mid" --name "曲名" --outdir output
+python skills/genshin-music-scores/scripts/score_cli.py convert "path/to/song.mid" --name "曲名" --outdir output
 ```

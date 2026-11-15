@@ -128,7 +128,7 @@
 | `yuanqin` | `Z[4]Z[4]B[4]\|N[2]…` —— `[n]`=时值，另有 `%`/`^`/`&`/`.`/`$`/`#` 等标记 |
 | `keyboard` | 字母键谱 —— `-`=延长、`(…)`=和弦、`[…]`=琶音、空格/`0`=休止 |
 
-`.mid` 需先用 `tools/add_songs.py` 转成 JSON。
+`.mid` 需先用 `skills/genshin-music-scores/scripts/score_cli.py convert` 转成 JSON。
 
 ---
 
@@ -143,6 +143,9 @@ app/
 │   ├── samples.js           ★ 音色清单 + 默认音色（风物之诗琴，base64；不进 git）
 │   ├── samples-vintage_lyre.js 等 6 个文件（其余 6 套音色，按需加载；不进 git）
 │   └── app.js               界面 / 调度 / 键盘弹奏 / 编辑 / 歌单
+├── scripts/
+│   ├── build_site.py        静态部署构建脚本
+│   └── fetch_samples.py     可选本机采样下载脚本
 ├── tests/
 │   ├── integration.test.js  契约 + 全库不变量
 │   ├── parse.test.js        解析器全库回归
@@ -211,7 +214,7 @@ node app/tests/ui.test.js                     # 音色 / 键盘弹奏 / 编辑 /
 
 ## 7. 已知限制
 
-1. **只读 JSON**，不转换 `.mid`（转换是 `tools/` 的活）。
+1. **只读 JSON**，不转换 `.mid`（转换是 `skills/genshin-music-scores/` 工具包的职责）。
 2. 渲染的是「按什么键、什么时候按」，**不含** BetterGI 的 `InputMode` 差异与投递延迟。
 3. 编辑导出统一转成 `midi` 型（1 tick = 1ms），会丢掉原文件里的 `type`/装饰音等记号；
    原文件不动，随时可「还原」。

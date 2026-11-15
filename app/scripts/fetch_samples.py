@@ -11,10 +11,10 @@ fetch_samples.py — 下载游戏乐器 21 音采样并生成 app/js/samples*.js
           instruments/<id>/audio/{1-,1,1+,…,7+}.mp3   （与 21 键一一对应）
 
 用法：
-    python tools/fetch_samples.py              # 下载 + 转码 + 生成
-    python tools/fetch_samples.py --keep       # 保留中间 mp3
-    python tools/fetch_samples.py --only windsong_lyre
-    python tools/fetch_samples.py --no-transcode   # 不压，直接用原始 mp3 内联
+    python app/scripts/fetch_samples.py              # 下载 + 转码 + 生成
+    python app/scripts/fetch_samples.py --keep       # 保留中间 mp3
+    python app/scripts/fetch_samples.py --only windsong_lyre
+    python app/scripts/fetch_samples.py --no-transcode   # 不压，直接用原始 mp3 内联
 
 转码需要 ffmpeg 在 PATH 里（没有就自动 --no-transcode，体积大一些但仍可用）。
 """
@@ -27,7 +27,7 @@ import time
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
+ROOT = os.path.dirname(os.path.dirname(HERE))
 
 RAW = 'https://raw.githubusercontent.com/JularDepick/WindsongLyre-Simulator.fork/main/instruments/'
 
