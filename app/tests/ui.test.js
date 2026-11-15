@@ -714,6 +714,51 @@ function pageScript(scoreUrls) {
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: btnRectTabLand.x, y: btnRectTabLand.y, button: 'left', clickCount: 1 });
     await sleep(150);
 
+    const tabLandScrollRoll = JSON.parse((await cdp.send('Runtime.evaluate', {
+      expression: `JSON.stringify({
+        rollHeight: document.querySelector('#roll').getBoundingClientRect().height,
+        scrollHeight: document.documentElement.scrollHeight,
+        touchAction: getComputedStyle(document.querySelector('#roll')).touchAction
+      })`,
+      returnByValue: true
+    })).result.value || '{}');
+    ok('平板横屏允许页面上下滚动且卷帘区不被压缩（高 >= 310px）',
+      tabLandScrollRoll.rollHeight >= 310 && tabLandScrollRoll.scrollHeight > 768 && tabLandScrollRoll.touchAction === 'none',
+      JSON.stringify(tabLandScrollRoll));
+
+    const touchMulti = await cdp.send('Runtime.evaluate', {
+      expression: `(function(){
+        var cv = document.querySelector('#roll');
+        var r = cv.getBoundingClientRect();
+        var x0 = r.left + r.width * 0.22, y0 = r.top + r.height * 0.15;
+        var x1 = r.left + r.width * 0.88, y1 = r.top + r.height * 0.90;
+        cv.dispatchEvent(new PointerEvent('pointerdown', { button: 0, pointerId: 9, pointerType: 'touch', clientX: x0, clientY: y0, bubbles: true }));
+        cv.dispatchEvent(new PointerEvent('pointermove', { button: 0, pointerId: 9, pointerType: 'touch', clientX: x1, clientY: y1, bubbles: true }));
+        cv.dispatchEvent(new PointerEvent('pointerup', { button: 0, pointerId: 9, pointerType: 'touch', clientX: x1, clientY: y1, bubbles: true }));
+        return (document.querySelector('#editInfo') || {}).textContent || '';
+      })()`,
+      returnByValue: true
+    });
+    ok('触屏手指拖拽框选可正常多选音符', /已选\s+\d+\s*音/.test(touchMulti.result.value || ''), touchMulti.result.value);
+
+    await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
+    await sleep(180);
+    const darkRollPx = JSON.parse((await cdp.send('Runtime.evaluate', {
+      expression: `(function(){
+        var cv = document.querySelector('#roll');
+        var ctx = cv.getContext('2d');
+        var px = ctx.getImageData(4, 4, 1, 1).data;
+        var bodyBg = getComputedStyle(document.body).backgroundColor;
+        return JSON.stringify({ r: px[0], g: px[1], b: px[2], bodyBg: bodyBg });
+      })()`,
+      returnByValue: true
+    })).result.value || '{}');
+    ok('夜间模式（prefers-color-scheme: dark）编辑区画布自动同步深色配色',
+      darkRollPx.r < 60 && darkRollPx.g < 60 && darkRollPx.b < 60,
+      JSON.stringify(darkRollPx));
+    await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
+    await sleep(120);
+
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true });
     await sleep(180);
     const phoneCheck = JSON.parse((await cdp.send('Runtime.evaluate', {

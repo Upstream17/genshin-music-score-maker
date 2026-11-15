@@ -1792,6 +1792,12 @@
     el.roll.addEventListener('contextmenu', function (ev) { ev.preventDefault(); });
 
     window.addEventListener('resize', function () { drawRoll(currentScoreMs()); });
+    if (window.matchMedia) {
+      var darkMq = window.matchMedia('(prefers-color-scheme: dark)');
+      var onThemeChange = function () { drawRoll(currentScoreMs()); };
+      if (typeof darkMq.addEventListener === 'function') darkMq.addEventListener('change', onThemeChange);
+      else if (typeof darkMq.addListener === 'function') darkMq.addListener(onThemeChange);
+    }
   }
 
   function markDragHandled() {
@@ -1858,7 +1864,8 @@
       return;
     }
 
-    var hit = hitTestDetailed(g, x, y);
+    var touchSlop = (ev.pointerType === 'touch') ? 10 : 5;
+    var hit = hitTestDetailed(g, x, y, touchSlop);
     if (hit) {
       var note = hit.note;
       state.edit.timeRange = null;
@@ -1957,6 +1964,7 @@
       return;
     }
 
+    if (dragSession && dragSession.pointerId != null && ev.pointerId != null && ev.pointerId !== dragSession.pointerId) return;
     var dx = ev.clientX - dragSession.startX;
     var dy = ev.clientY - (dragSession.startY || 0);
 
@@ -2112,6 +2120,7 @@
 
   function onRollPointerUp(ev) {
     if (!dragSession) return;
+    if (dragSession.pointerId != null && ev.pointerId != null && ev.pointerId !== dragSession.pointerId) return;
     var sess = dragSession;
     dragSession = null;
     if (sess.pointerId != null) {
@@ -2210,7 +2219,9 @@
     drawRoll(currentScoreMs());
   }
 
-  function hitTestDetailed(g, x, y) {
+  function hitTestDetailed(g, x, y, padX) {
+    padX = (padX == null) ? 5 : padX;
+    var edgePad = Math.max(6, padX);
     var notes = state.current ? state.current.notes : [];
     var row = rowAtY(g, y);
     if (row < 0 || row > 20) return null;
@@ -2226,12 +2237,12 @@
       var x0 = g.xOf(n.start);
       var x1 = g.xOf(n.end);
       if (x1 - x0 < 4) x1 = x0 + 4;
-      if (x >= x0 - 5 && x <= x1 + 6) {
+      if (x >= x0 - padX && x <= x1 + edgePad) {
         var d = Math.abs((x0 + x1) / 2 - x);
         if (d < bestDist) {
           bestDist = d;
           best = n;
-          isEdge = (x >= x1 - 6 && x <= x1 + 6);
+          isEdge = (x >= x1 - edgePad && x <= x1 + edgePad);
         }
       }
     }
@@ -2249,9 +2260,70 @@
     } else ctx.fillRect(x, y, w, h);
   }
 
+  function isDarkTheme() {
+    return typeof window !== 'undefined' && window.matchMedia &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+
+  function rollPalette() {
+    if (isDarkTheme()) {
+      return {
+        bg: '#191c1a',
+        rulerBg: '#1f2320',
+        rulerLine: '#2f3531',
+        gutBg: '#161817',
+        gutLine: '#2a2e2b',
+        rowC: '#1e2320',
+        rowLine: '#262a27',
+        labelC: '#929b95',
+        labelKey: '#606863',
+        emptyText: '#6c746f',
+        snapLine: '#212522',
+        majorLine: '#2d332f',
+        tickLine: '#3c433e',
+        tickText: '#8e9690',
+        accent: '#459e80',
+        timeRangeFill: 'rgba(69, 158, 128, 0.14)',
+        timeRangeHead: 'rgba(69, 158, 128, 0.28)',
+        noteLow: '#2d5347',
+        noteMid: '#376c5b',
+        noteHigh: '#438570',
+        noteHot: '#53b896',
+        selStroke: '#e3e6e3',
+        boxFill: 'rgba(69, 158, 128, 0.16)'
+      };
+    }
+    return {
+      bg: '#fbfaf8',
+      rulerBg: '#f3f1ec',
+      rulerLine: '#e0ddd5',
+      gutBg: '#f5f4f1',
+      gutLine: '#e5e2db',
+      rowC: '#f2efe9',
+      rowLine: '#e5e2db',
+      labelC: '#8b9099',
+      labelKey: '#b3b7bd',
+      emptyText: '#b3b7bd',
+      snapLine: '#f0ede6',
+      majorLine: '#e5e2db',
+      tickLine: '#d5d1c8',
+      tickText: '#8b9099',
+      accent: '#2f6b58',
+      timeRangeFill: 'rgba(47, 107, 88, 0.07)',
+      timeRangeHead: 'rgba(47, 107, 88, 0.18)',
+      noteLow: '#c3d3cb',
+      noteMid: '#a9c2b6',
+      noteHigh: '#8fae9f',
+      noteHot: '#2f6b58',
+      selStroke: '#22252b',
+      boxFill: 'rgba(47, 107, 88, 0.12)'
+    };
+  }
+
   function drawRoll(t) {
     var cv = el.roll, ctx = state.rollCtx;
     if (!cv || !ctx) return;
+    var pal = rollPalette();
     var dpr = window.devicePixelRatio || 1;
     var g = rollGeom();
     var W = g.W, H = g.H;
@@ -2265,19 +2337,19 @@
 
     var LABEL_FONT = '8.5px "Cascadia Mono", Consolas, monospace';
 
-    ctx.fillStyle = '#fbfaf8';
+    ctx.fillStyle = pal.bg;
     ctx.fillRect(0, 0, W, H);
 
     /* 顶部时间刻度尺底栏（点击/拖拽跳转播放进度） */
-    ctx.fillStyle = '#f3f1ec';
+    ctx.fillStyle = pal.rulerBg;
     ctx.fillRect(g.GUT, 0, W - g.GUT, g.plotTop);
-    ctx.fillStyle = '#e0ddd5';
+    ctx.fillStyle = pal.rulerLine;
     ctx.fillRect(0, g.plotTop - 0.5, W, 0.5);
 
     /* 左侧音名列 */
-    ctx.fillStyle = '#f5f4f1';
+    ctx.fillStyle = pal.gutBg;
     ctx.fillRect(0, 0, g.GUT, H);
-    ctx.fillStyle = '#e5e2db';
+    ctx.fillStyle = pal.gutLine;
     ctx.fillRect(g.GUT - 0.5, 0, 0.5, H);
 
     /* 21 行：C 行标音名，其余标键字母 */
@@ -2287,20 +2359,20 @@
       var isC = (p % 12 === 0);
 
       if (isC) {
-        ctx.fillStyle = '#f2efe9';
+        ctx.fillStyle = pal.rowC;
         ctx.fillRect(g.GUT, y, g.plotW, Math.max(1, g.rowH - 0.5));
       }
-      ctx.fillStyle = '#e5e2db';
+      ctx.fillStyle = pal.rowLine;
       ctx.fillRect(g.GUT, y + g.rowH - 0.5, g.plotW, 0.5);
 
       ctx.textBaseline = 'middle';
       if (g.rowH >= 6) {
         if (isC) {
-          ctx.fillStyle = '#8b9099';
+          ctx.fillStyle = pal.labelC;
           ctx.font = LABEL_FONT;
           ctx.fillText(pitchName(p), 5, y + g.rowH / 2);
         } else {
-          ctx.fillStyle = '#b3b7bd';
+          ctx.fillStyle = pal.labelKey;
           ctx.font = LABEL_FONT;
           ctx.fillText(k, 25, y + g.rowH / 2);
         }
@@ -2308,7 +2380,7 @@
     }
 
     if (!state.current) {
-      ctx.fillStyle = '#b3b7bd';
+      ctx.fillStyle = pal.emptyText;
       ctx.font = '11.5px "Segoe UI", system-ui, sans-serif';
       ctx.textBaseline = 'middle';
       ctx.fillText('点击此处直接落音新建曲谱，或从左侧「＋ 新建曲谱 / 导入曲谱」开始', g.GUT + 18, H / 2);
@@ -2324,7 +2396,7 @@
     for (var st = firstSnap; st <= g.t1; st += drawStepMs) {
       var sx = g.xOf(st);
       if (sx < g.GUT) continue;
-      ctx.fillStyle = '#f0ede6';
+      ctx.fillStyle = pal.snapLine;
       ctx.fillRect(sx, g.plotTop, 1, g.plotH);
     }
 
@@ -2334,12 +2406,12 @@
     for (var tt = first; tt <= g.t1; tt += stepMs) {
       var xx = g.xOf(tt);
       if (xx < g.GUT) continue;
-      ctx.fillStyle = '#e5e2db';
+      ctx.fillStyle = pal.majorLine;
       ctx.fillRect(xx, g.plotTop, 1, g.plotH);
-      ctx.fillStyle = '#d5d1c8';
+      ctx.fillStyle = pal.tickLine;
       ctx.fillRect(xx, g.plotTop - 4, 1, 4);
       if (g.rowH >= 5) {
-        ctx.fillStyle = '#8b9099';
+        ctx.fillStyle = pal.tickText;
         ctx.font = LABEL_FONT;
         ctx.fillText((tt / 1000).toFixed(0) + 's', xx + 4, g.PAD - 1);
       }
@@ -2351,11 +2423,11 @@
       var rx0 = clamp(g.xOf(tr.start), g.GUT, W - g.PAD);
       var rx1 = clamp(g.xOf(tr.end), g.GUT, W - g.PAD);
       if (rx1 > rx0) {
-        ctx.fillStyle = 'rgba(47, 107, 88, 0.07)';
+        ctx.fillStyle = pal.timeRangeFill;
         ctx.fillRect(rx0, g.plotTop, rx1 - rx0, g.plotH);
-        ctx.fillStyle = 'rgba(47, 107, 88, 0.18)';
+        ctx.fillStyle = pal.timeRangeHead;
         ctx.fillRect(rx0, 0, rx1 - rx0, g.plotTop);
-        ctx.fillStyle = '#2f6b58';
+        ctx.fillStyle = pal.accent;
         ctx.fillRect(rx0, 0, 1, H);
         ctx.fillRect(rx1 - 1, 0, 1, H);
       }
@@ -2363,7 +2435,7 @@
 
     /* 播放头 */
     var hx = g.GUT + g.plotW * 0.25;
-    ctx.fillStyle = '#2f6b58';
+    ctx.fillStyle = pal.accent;
     ctx.fillRect(hx - 0.5, g.plotTop, 1, g.plotH);
 
     /* 音符 */
@@ -2387,15 +2459,15 @@
       var hot = isRecActive || (n.start <= t && n.end > t);
 
       /* 低/中/高三排用同一个强调色的三级明度，保持淡雅 */
-      ctx.fillStyle = hot ? '#2f6b58'
-        : (n.pitch < 60 ? '#c3d3cb' : (n.pitch < 72 ? '#a9c2b6' : '#8fae9f'));
+      ctx.fillStyle = hot ? pal.noteHot
+        : (n.pitch < 60 ? pal.noteLow : (n.pitch < 72 ? pal.noteMid : pal.noteHigh));
       rr(ctx, x0, yy + 1, x1 - x0, barH, 2);
 
       if (isNoteSelected(n)) {
-        ctx.strokeStyle = '#22252b';
+        ctx.strokeStyle = pal.selStroke;
         ctx.lineWidth = 1.5;
         ctx.strokeRect(x0 - 1.5, yy + 0.5, x1 - x0 + 3, barH + 1);
-        ctx.fillStyle = '#22252b';
+        ctx.fillStyle = pal.selStroke;
         ctx.fillRect(x1 - 1, yy + 1, 2, barH);
       }
     }
@@ -2405,10 +2477,10 @@
     if (br && (br.x1 > br.x0 || br.y1 > br.y0)) {
       var bw = Math.max(1, br.x1 - br.x0);
       var bh = Math.max(1, br.y1 - br.y0);
-      ctx.fillStyle = 'rgba(47, 107, 88, 0.12)';
+      ctx.fillStyle = pal.boxFill;
       ctx.fillRect(br.x0, br.y0, bw, bh);
       ctx.save();
-      ctx.strokeStyle = '#2f6b58';
+      ctx.strokeStyle = pal.accent;
       ctx.lineWidth = 1;
       if (typeof ctx.setLineDash === 'function') ctx.setLineDash([4, 3]);
       ctx.strokeRect(br.x0 + 0.5, br.y0 + 0.5, bw, bh);
@@ -2416,7 +2488,7 @@
     }
 
     /* 播放头顶部小三角 */
-    ctx.fillStyle = '#2f6b58';
+    ctx.fillStyle = pal.accent;
     ctx.beginPath();
     ctx.moveTo(hx - 4, g.plotTop - 6);
     ctx.lineTo(hx + 4, g.plotTop - 6);
