@@ -602,6 +602,54 @@ function pageScript(scoreUrls) {
     });
     const dc = JSON.parse(dropCheck.result.value || '{}');
     ok('原生 OS 拖拽文件成功导入/热更新', /更新|导入/.test(dc.toast), 'toast: ' + dc.toast);
+
+    /* ───────── 10. 顶栏 GitHub 跳转按钮 + 刷新后本地缓存持久化 ───────── */
+    const preReload = await cdp.send('Runtime.evaluate', {
+      expression: `JSON.stringify({
+        ghHref: document.querySelector('#btnGithub') ? document.querySelector('#btnGithub').getAttribute('href') : '',
+        ghTarget: document.querySelector('#btnGithub') ? document.querySelector('#btnGithub').getAttribute('target') : '',
+        ghWidth: document.querySelector('#btnGithub') ? document.querySelector('#btnGithub').getBoundingClientRect().width : 0,
+        listCount: document.querySelectorAll('#scoreList li[data-id]').length,
+        npTitle: document.querySelector('#npTitle') ? document.querySelector('#npTitle').textContent : '',
+        editInfo: document.querySelector('#editInfo') ? document.querySelector('#editInfo').textContent : ''
+      })`,
+      returnByValue: true
+    });
+    const pr = JSON.parse(preReload.result.value || '{}');
+    ok('顶栏包含 GitHub 跳转按钮且链接正确',
+      pr.ghHref === 'https://github.com/Upstream17/genshin-music-score-maker' && pr.ghTarget === '_blank' && pr.ghWidth > 0,
+      JSON.stringify(pr));
+
+    await cdp.send('Page.reload');
+    await sleep(1200);
+    const postReload = await cdp.send('Runtime.evaluate', {
+      expression: `JSON.stringify({
+        listCount: document.querySelectorAll('#scoreList li[data-id]').length,
+        npTitle: document.querySelector('#npTitle') ? document.querySelector('#npTitle').textContent : '',
+        editInfo: document.querySelector('#editInfo') ? document.querySelector('#editInfo').textContent : '',
+        hasStorage: !!localStorage.getItem('bgi_lyre_workspace_v1')
+      })`,
+      returnByValue: true
+    });
+    const po = JSON.parse(postReload.result.value || '{}');
+    ok('刷新页面后自动保留本地缓存曲目与当前选中曲谱',
+      po.hasStorage && po.listCount === pr.listCount && po.npTitle === pr.npTitle && po.editInfo === pr.editInfo,
+      'before=' + JSON.stringify(pr) + ' after=' + JSON.stringify(po));
+
+    await cdp.send('Runtime.evaluate', {
+      expression: `document.querySelector('#btnClearList').click()`
+    });
+    await sleep(300);
+    const clearedCheck = await cdp.send('Runtime.evaluate', {
+      expression: `JSON.stringify({
+        listCount: document.querySelectorAll('#scoreList li[data-id]').length,
+        hasStorage: !!localStorage.getItem('bgi_lyre_workspace_v1')
+      })`,
+      returnByValue: true
+    });
+    const cc = JSON.parse(clearedCheck.result.value || '{}');
+    ok('点击「清空」同步清理列表与本地缓存', cc.listCount === 0 && !cc.hasStorage, JSON.stringify(cc));
+
     exitCode = FAIL ? 1 : 0;
   } catch (e) {
     console.error('失败: ' + (e && e.message));

@@ -383,7 +383,8 @@ if (html) {
   });
   ok('index.html 没有使用 ES module（type="module"）', html.indexOf('type="module"') < 0);
   ok('index.html 没有外部 http(s) 资源引用',
-    !/src\s*=\s*["']https?:/i.test(html) && !/href\s*=\s*["']https?:/i.test(html));
+    !/<(?:script|img|audio|video|source|iframe)\b[^>]*\bsrc\s*=\s*["']https?:/i.test(html) &&
+    !/<link\b[^>]*\bhref\s*=\s*["']https?:/i.test(html));
 }
 const appSrc = fs.existsSync(path.join(PLAYER, 'js/app.js'))
   ? fs.readFileSync(path.join(PLAYER, 'js/app.js'), 'utf8') : '';

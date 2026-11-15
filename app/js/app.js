@@ -418,6 +418,196 @@
     }
   }
 
+  /* ═══════════════════ 浏览器本地缓存（每用户独立持久化） ═══════════════════ */
+
+  var WORKSPACE_KEY = 'bgi_lyre_workspace_v1';
+  var workspaceReady = false;
+  var hiddenShowcasePaths = {};
+  var saveTimer = null;
+  var warnedQuota = false;
+
+  function compactNotes(notes) {
+    if (!Array.isArray(notes)) return null;
+    var out = [];
+    for (var i = 0; i < notes.length; i++) {
+      var n = notes[i];
+      if (!n || !n.key) continue;
+      if (n.velocity != null && n.velocity !== 1) out.push([n.key, n.start, n.end, n.velocity]);
+      else out.push([n.key, n.start, n.end]);
+    }
+    return out;
+  }
+
+  function expandNotes(arr) {
+    if (!Array.isArray(arr)) return [];
+    var out = [];
+    for (var i = 0; i < arr.length; i++) {
+      var r = arr[i];
+      if (!Array.isArray(r) || r.length < 3) continue;
+      var k = String(r[0] || '');
+      var pitch = keyToPitch(k);
+      if (pitch == null) continue;
+      var start = Number(r[1]) || 0;
+      var end = Math.max(start + MIN_NOTE_MS, Number(r[2]) || (start + MIN_NOTE_MS));
+      var vel = r.length >= 4 && r[3] != null ? Number(r[3]) : 1;
+      out.push({ key: k, pitch: pitch, start: start, end: end, velocity: vel });
+    }
+    return out;
+  }
+
+  function loadWorkspaceCache() {
+    try {
+      if (typeof localStorage === 'undefined' || !localStorage) return null;
+      var raw = localStorage.getItem(WORKSPACE_KEY);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function buildWorkspacePayload(compactLargeText) {
+    var customEntries = [];
+    var showcaseEdits = {};
+    for (var i = 0; i < state.entries.length; i++) {
+      var e = state.entries[i];
+      if (!e) continue;
+      if (e.isShowcase) {
+        if (e.edited || e.renamed) {
+          showcaseEdits[e.path] = {
+            name: e.name,
+            renamed: !!e.renamed,
+            edited: !!e.edited,
+            workingNotes: e.edited && e.workingNotes ? compactNotes(e.workingNotes) : null
+          };
+        }
+        continue;
+      }
+      if (compactLargeText && !e.edited && !e.isNew && e.text && e.text.length > 50000) continue;
+      customEntries.push({
+        path: e.path,
+        fileName: e.fileName,
+        name: e.name,
+        author: e.author || '',
+        type: e.type || 'midi',
+        bpm: e.bpm || 120,
+        ticks: e.ticks || 1000,
+        ok: !!e.ok,
+        isNew: !!e.isNew,
+        renamed: !!e.renamed,
+        edited: !!e.edited,
+        error: e.error || '',
+        noteCount: e.noteCount || 0,
+        durationMs: e.durationMs || 0,
+        instrument: e.instrument || '',
+        text: e.isNew ? '' : (e.text || ''),
+        workingNotes: (e.edited || e.isNew) && e.workingNotes ? compactNotes(e.workingNotes) : null
+      });
+    }
+    return {
+      v: 1,
+      selectedPath: state.currentEntry ? state.currentEntry.path : null,
+      prefs: {
+        volume: state.volume,
+        speed: state.speed,
+        playMode: state.playMode,
+        playKeys: !!state.playKeys,
+        instrumentKey: state.instrumentKey === 'real:custom' ? '' : state.instrumentKey
+      },
+      hiddenShowcase: Object.keys(hiddenShowcasePaths),
+      showcaseEdits: showcaseEdits,
+      customEntries: customEntries
+    };
+  }
+
+  function saveWorkspaceNow() {
+    if (!workspaceReady) return false;
+    try {
+      if (typeof localStorage === 'undefined' || !localStorage) return false;
+      localStorage.setItem(WORKSPACE_KEY, JSON.stringify(buildWorkspacePayload(false)));
+      return true;
+    } catch (_) {
+      try {
+        localStorage.setItem(WORKSPACE_KEY, JSON.stringify(buildWorkspacePayload(true)));
+        if (!warnedQuota) {
+          warnedQuota = true;
+          toast('浏览器缓存空间紧张，部分大型未编辑曲谱仅在当前页面保留', 'err', 4200);
+        }
+        return true;
+      } catch (_2) {
+        return false;
+      }
+    }
+  }
+
+  function scheduleSaveWorkspace() {
+    if (!workspaceReady) return;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () {
+      saveTimer = null;
+      saveWorkspaceNow();
+    }, 250);
+  }
+
+  function restoreWorkspaceEntries(saved) {
+    hiddenShowcasePaths = {};
+    if (!saved) return;
+    if (Array.isArray(saved.hiddenShowcase)) {
+      for (var h = 0; h < saved.hiddenShowcase.length; h++) {
+        var hp = String(saved.hiddenShowcase[h] || '');
+        if (hp) hiddenShowcasePaths[hp] = true;
+      }
+    }
+    var list = Array.isArray(saved.customEntries) ? saved.customEntries : [];
+    for (var i = 0; i < list.length; i++) {
+      var ce = list[i];
+      if (!ce || (!ce.isNew && !ce.text)) continue;
+      var notes = Array.isArray(ce.workingNotes) ? expandNotes(ce.workingNotes) : null;
+      var noteCount = notes ? notes.length : (ce.noteCount || 0);
+      var dur = ce.durationMs || 0;
+      if (notes) {
+        var maxEnd = 0;
+        for (var k = 0; k < notes.length; k++) if (notes[k].end > maxEnd) maxEnd = notes[k].end;
+        dur = ce.isNew ? maxEnd : Math.max(dur, maxEnd);
+      }
+      var m = String(ce.name || '').match(/^未命名曲谱\s+(\d+)$/);
+      if (m) {
+        var seq = parseInt(m[1], 10);
+        if (seq > newScoreSeq) newScoreSeq = seq;
+      }
+      state.entries.push({
+        id: state.nextId++,
+        path: ce.path || (ce.name + '.json'),
+        fileName: ce.fileName || (ce.name + '.json'),
+        name: ce.name || '未命名曲谱',
+        author: ce.author || '',
+        type: ce.type || 'midi',
+        bpm: ce.bpm || 120,
+        ticks: ce.ticks || 1000,
+        ok: ce.ok !== false,
+        isNew: !!ce.isNew,
+        renamed: !!ce.renamed,
+        edited: !!ce.edited,
+        error: ce.error || '',
+        noteCount: noteCount,
+        durationMs: dur,
+        instrument: ce.instrument || '',
+        text: ce.text || '',
+        workingNotes: notes
+      });
+    }
+    if (state.entries.length) {
+      sortEntries();
+      renderList();
+      var want = saved.selectedPath
+        ? state.entries.filter(function (e) { return e.path === saved.selectedPath && e.ok; })[0]
+        : null;
+      if (want) selectEntry(want.id);
+    }
+    updateTrackNav();
+  }
+
   /* ═══════════════════ 导入 ═══════════════════ */
 
   function pickJson(files) {
@@ -582,6 +772,9 @@
           existing.durationMs = sc.stats ? sc.stats.durationMs : 0;
           existing.instrument = sc.instrument || '';
           existing.text = text;
+          existing.edited = false;
+          existing.renamed = false;
+          existing.workingNotes = null;
           updated++;
 
           if (state.selectedId === existing.id) {
@@ -643,6 +836,7 @@
       if (firstOk) selectEntry(firstOk.id);
     }
     updateTrackNav();
+    if (added || updated) scheduleSaveWorkspace();
   }
 
   function sortEntries() {
@@ -770,6 +964,7 @@
 
     var removedName = target.name || '未命名';
     var wasSelected = (state.selectedId === id);
+    if (target.isShowcase && target.path) hiddenShowcasePaths[target.path] = true;
     state.entries.splice(idx, 1);
 
     if (wasSelected) {
@@ -783,6 +978,7 @@
       renderList();
       updateTrackNav();
     }
+    scheduleSaveWorkspace();
     toast('已移除「' + removedName + '」', 'ok');
   }
 
@@ -828,6 +1024,7 @@
           if (el.npTitle) el.npTitle.textContent = nextName;
         }
         renderList();
+        scheduleSaveWorkspace();
         toast('曲名已更新为「' + nextName + '」', 'ok');
       }
     }
@@ -884,6 +1081,7 @@
     selectEntry(id);
     scrollListTo(id);
     updateTrackNav();
+    scheduleSaveWorkspace();
     if (!opts.silent) {
       toast('已新建「' + name + '」· 点击卷帘加音，点击标题可修改曲名', 'ok');
     }
@@ -994,7 +1192,10 @@
         return;
       }
       sc.baseDurationMs = sc.stats ? sc.stats.durationMs : 0;
-      if (forceReset) entry.workingNotes = null;
+      if (forceReset) {
+        entry.workingNotes = null;
+        entry.edited = false;
+      }
       if (entry.workingNotes) {
         sc.notes = entry.workingNotes.map(copyNote);
         sc.name = entry.name;
@@ -1025,6 +1226,7 @@
     updateEditBar();
     clearKeys();
     drawRoll(0);
+    scheduleSaveWorkspace();
   }
 
   /** notes 变了之后统一重算：排序 / 最长时值 / 统计 / 同步歌单 */
@@ -1052,9 +1254,11 @@
       state.currentEntry.noteCount = sc.stats.noteCount;
       state.currentEntry.durationMs = sc.stats.durationMs;
       state.currentEntry.workingNotes = sc.notes.map(copyNote);
+      if (state.edit.dirty) state.currentEntry.edited = true;
     }
     updateNpSubText();
     renderList();
+    if (state.edit.dirty) scheduleSaveWorkspace();
   }
 
   /* ═══════════════════ 播放调度 ═══════════════════ */
@@ -1375,6 +1579,7 @@
       el.btnPlayMode.innerHTML = cur.icon + '<span id="playModeLabel">' + cur.label + '</span>';
       el.playModeLabel = document.getElementById('playModeLabel');
     }
+    scheduleSaveWorkspace();
   }
 
   function cyclePlayMode() {
@@ -2834,7 +3039,13 @@
     el.search.addEventListener('input', function () { state.filter = el.search.value; renderList(); });
     el.btnClearList.addEventListener('click', function () {
       state.entries = [];
+      hiddenShowcasePaths = {};
+      newScoreSeq = 0;
       resetToEmptyState();
+      try {
+        if (typeof localStorage !== 'undefined' && localStorage) localStorage.removeItem(WORKSPACE_KEY);
+      } catch (_) { }
+      toast('已清空歌单与本地缓存', 'ok');
     });
 
     if (el.npTitle) {
@@ -2851,6 +3062,7 @@
           state.currentEntry.renamed = true;
           if (state.sourceJson) state.sourceJson.name = nextName;
           renderList();
+          scheduleSaveWorkspace();
           toast('曲名已更新为「' + nextName + '」', 'ok');
         }
       };
@@ -2904,6 +3116,7 @@
       state.speed = v;
       el.speedVal.textContent = v.toFixed(2) + '×';
       if (state.playing) startPlayback(keep); else state.posMs = keep;
+      scheduleSaveWorkspace();
     });
     if (el.btnPlayMode) el.btnPlayMode.addEventListener('click', cyclePlayMode);
     el.loop.addEventListener('change', function () {
@@ -2917,6 +3130,7 @@
     el.playKeys.addEventListener('change', function () {
       state.playKeys = el.playKeys.checked;
       if (!state.playKeys) { state.heldKeys = {}; }
+      scheduleSaveWorkspace();
     });
 
     el.seek.addEventListener('pointerdown', function () { state.seeking = true; });
@@ -2941,10 +3155,12 @@
 
     el.instrument.addEventListener('change', function () {
       applyInstrument(el.instrument.value);
+      scheduleSaveWorkspace();
     });
     el.volume.addEventListener('input', function () {
       state.volume = parseFloat(el.volume.value);
       if (state.engine) { try { state.engine.setMasterVolume(state.volume); } catch (_) { } }
+      scheduleSaveWorkspace();
     });
 
     /* 编辑操作 */
@@ -3178,7 +3394,7 @@
   }
 
   /** 在 HTTP(S) 托管环境下自动载入内置示范曲库（file:// 本地直开时不发任何网络请求） */
-  async function loadShowcaseLibrary() {
+  async function loadShowcaseLibrary(saved) {
     if (typeof window === 'undefined' || !window.location) return;
     var proto = window.location.protocol;
     if (proto !== 'http:' && proto !== 'https:') return;
@@ -3195,30 +3411,44 @@
 
     var existingPaths = {};
     state.entries.forEach(function (e) { existingPaths[e.path] = true; });
+    var showcaseEdits = (saved && saved.showcaseEdits && typeof saved.showcaseEdits === 'object') ? saved.showcaseEdits : {};
     var added = 0;
 
     for (var i = 0; i < files.length; i++) {
       var fname = String(files[i] || '');
       if (!fname || !/\.json$/i.test(fname)) continue;
       var relPath = 'library/' + fname;
-      if (existingPaths[relPath]) continue;
+      if (existingPaths[relPath] || hiddenShowcasePaths[relPath]) continue;
       try {
         var text = await xhrGetJsonText('library/' + encodeURIComponent(fname));
         var obj = JSON.parse(text);
         var sc = window.BGIParse.parseScore(obj, { filename: fname });
+        var ov = showcaseEdits[relPath];
+        var workingNotes = (ov && ov.edited && Array.isArray(ov.workingNotes)) ? expandNotes(ov.workingNotes) : null;
+        var noteCount = workingNotes ? workingNotes.length : (sc.stats ? sc.stats.noteCount : 0);
+        var durationMs = sc.stats ? sc.stats.durationMs : 0;
+        if (workingNotes) {
+          var maxEnd = 0;
+          for (var k = 0; k < workingNotes.length; k++) if (workingNotes[k].end > maxEnd) maxEnd = workingNotes[k].end;
+          durationMs = Math.max(durationMs, maxEnd);
+        }
         state.entries.push({
           id: state.nextId++,
           path: relPath,
           fileName: fname,
-          name: sc.ok ? (sc.name || fname.replace(/\.json$/i, '')) : fname.replace(/\.json$/i, ''),
+          isShowcase: true,
+          name: (ov && ov.name) ? ov.name : (sc.ok ? (sc.name || fname.replace(/\.json$/i, '')) : fname.replace(/\.json$/i, '')),
+          renamed: !!(ov && ov.renamed),
+          edited: !!(ov && ov.edited && workingNotes),
           author: sc.author || '',
           type: sc.type || 'unknown',
           ok: !!sc.ok,
           error: sc.error || '',
-          noteCount: sc.stats ? sc.stats.noteCount : 0,
-          durationMs: sc.stats ? sc.stats.durationMs : 0,
+          noteCount: noteCount,
+          durationMs: durationMs,
           instrument: sc.instrument || '',
-          text: text
+          text: text,
+          workingNotes: workingNotes
         });
         existingPaths[relPath] = true;
         added++;
@@ -3229,7 +3459,9 @@
     sortEntries();
     renderList();
     if (!state.selectedId) {
-      var firstOk = state.entries.filter(function (e) { return e.ok; })[0];
+      var wantPath = saved && saved.selectedPath;
+      var matched = wantPath ? state.entries.filter(function (e) { return e.path === wantPath && e.ok; })[0] : null;
+      var firstOk = matched || state.entries.filter(function (e) { return e.ok; })[0];
       if (firstOk) selectEntry(firstOk.id);
     }
     updateTrackNav();
@@ -3243,12 +3475,26 @@
     if (!window.BGIAudio || typeof window.BGIAudio.createEngine !== 'function') missing.push('js/audio-engine.js');
     if (missing.length) { showFatal('缺少必需文件：' + missing.join('、')); return; }
 
+    var saved = loadWorkspaceCache();
+    var prefs = (saved && saved.prefs && typeof saved.prefs === 'object') ? saved.prefs : {};
+    if (typeof prefs.volume === 'number' && !isNaN(prefs.volume)) {
+      state.volume = clamp(prefs.volume, 0, 1);
+      if (el.volume) el.volume.value = String(state.volume);
+    }
+    if (typeof prefs.speed === 'number' && !isNaN(prefs.speed)) {
+      state.speed = clamp(prefs.speed, 0.5, 2);
+      if (el.speed) el.speed.value = String(state.speed);
+    }
+    if (typeof prefs.playKeys === 'boolean') {
+      state.playKeys = prefs.playKeys;
+    }
+
     buildKeyboard();
     initRoll();
-    var firstKey = fillInstruments();
-    el.speedVal.textContent = '1.00×';
+    var firstKey = fillInstruments(prefs.instrumentKey || '');
+    el.speedVal.textContent = state.speed.toFixed(2) + '×';
     el.zoomVal.textContent = state.viewSec + ' 秒';
-    setPlayMode('list');
+    setPlayMode(prefs.playMode || 'list');
     el.playKeys.checked = state.playKeys;
 
     renderList();
@@ -3258,6 +3504,9 @@
     bind();
     requestAnimationFrame(frame);
 
+    restoreWorkspaceEntries(saved);
+    workspaceReady = true;
+
     /* 默认音色 = 真实采样（风物之诗琴）。若未打包采样数据，则切到默认合成音色并提示。 */
     if (!sampleManifest()) {
       applyInstrument(firstKey);
@@ -3266,10 +3515,12 @@
       applyInstrument(firstKey);
     }
 
-    loadShowcaseLibrary();
+    loadShowcaseLibrary(saved);
 
+    window.addEventListener('pagehide', function () { saveWorkspaceNow(); });
     window.addEventListener('beforeunload', function (e) {
-      if (state.edit.dirty) { e.preventDefault(); e.returnValue = ''; }
+      var cachedOk = saveWorkspaceNow();
+      if (state.edit.dirty && !cachedOk) { e.preventDefault(); e.returnValue = ''; }
     });
 
     console.log('原神琴谱制谱器 · 演奏台');

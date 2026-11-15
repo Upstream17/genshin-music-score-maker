@@ -1,9 +1,11 @@
 # 原神琴谱制谱器 · Genshin Music Score Maker
 
+> **在线体验演奏台**：[https://yuanqin.upstream.eu.cc/](https://yuanqin.upstream.eu.cc/) （打开即用，自动加载 18 首示范曲目，支持个人本地浏览器自动缓存修改草稿）
+
 一套面向 **原神 21 键乐器（兼容 BetterGI 自动弹奏 `midi` JSON 规范）** 的开源制谱工作流与网页预览编辑台：
 
 - **AI 制谱 Skill 工具包（`skills/genshin-music-scores/`）**：自包含全部 `.mid` / `.midi` → 21 键 `midi` JSON 工具与编配方法论（分析、转换、移调、试听渲染、交付验收全收于一套统一工具）——下载一首 `.mid`，交给 AI 即可产出高质量 21 键谱面。
-- **网页预览与编辑台（`app/`）**：零依赖、无构建的浏览器端播放器与卷帘编辑器，支持多音色试听、键盘弹奏/录制、音符精细编辑与 BetterGI JSON 导出；支持本地双击打开或部署到 Cloudflare 静态托管（在线地址：`https://yuanqin.upstream.eu.cc`）。
+- **网页预览与编辑台（`app/`）**：零依赖、无构建的浏览器端播放器与卷帘编辑器，支持多音色试听、键盘弹奏/录制、音符精细编辑与 BetterGI JSON 导出；支持本地双击打开或部署到 Cloudflare 静态托管（[在线演奏台](https://yuanqin.upstream.eu.cc/)）。
 
 > 非官方个人工具，与 miHoYo / HoYoverse、与 BetterGI 开发者均无隶属关系。
 > 代码以 **GPL-3.0** 发布；**不含游戏音频**；示范曲谱的版权状态见 [NOTICE.md](NOTICE.md)。
@@ -29,7 +31,7 @@
 
 ### A. 在线试听与编辑 → 打开演奏台
 
-- **在线访问**：`https://yuanqin.upstream.eu.cc`（自动载入 `library/` 中的 18 首示范曲）
+- **在线访问**：[https://yuanqin.upstream.eu.cc/](https://yuanqin.upstream.eu.cc/)（自动载入 `library/` 中的 18 首示范曲）
 - **本地离线使用**：直接双击 [`app/index.html`](app/index.html)，将你的曲谱目录或单个 `.json` 文件拖进页面即可
 
 主要功能：
