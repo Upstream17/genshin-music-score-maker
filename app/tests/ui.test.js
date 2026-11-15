@@ -634,6 +634,98 @@ function pageScript(scoreUrls) {
       po.hasStorage && po.listCount === pr.listCount && po.npTitle === pr.npTitle && po.editInfo === pr.editInfo,
       'before=' + JSON.stringify(pr) + ' after=' + JSON.stringify(po));
 
+    /* ───────── 11. 多客户端适配（顶栏折叠按钮 + 平板/手机抽屉 + 编辑区工具栏可分行） ───────── */
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+    await sleep(150);
+    await cdp.send('Runtime.evaluate', { expression: `document.querySelector('#btnSidebar').click()` });
+    await sleep(120);
+    const deskCollapse = JSON.parse((await cdp.send('Runtime.evaluate', {
+      expression: `JSON.stringify({
+        collapsed: document.querySelector('#appRoot').classList.contains('is-sidebar-collapsed'),
+        expandedAttr: document.querySelector('#btnSidebar').getAttribute('aria-expanded'),
+        sidebarWidth: document.querySelector('#sidebarPanel').getBoundingClientRect().width
+      })`,
+      returnByValue: true
+    })).result.value || '{}');
+    ok('桌面端顶栏按钮可折叠左侧曲目栏',
+      deskCollapse.collapsed && deskCollapse.expandedAttr === 'false' && deskCollapse.sidebarWidth === 0,
+      JSON.stringify(deskCollapse));
+    await cdp.send('Runtime.evaluate', { expression: `document.querySelector('#btnSidebar').click()` });
+    await sleep(120);
+
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 768, height: 1024, deviceScaleFactor: 2, mobile: true });
+    await sleep(180);
+    const tabletInit = JSON.parse((await cdp.send('Runtime.evaluate', {
+      expression: `JSON.stringify({
+        drawerOpen: document.querySelector('#appRoot').classList.contains('is-sidebar-open'),
+        expandedAttr: document.querySelector('#btnSidebar').getAttribute('aria-expanded'),
+        docOverflow: document.documentElement.scrollWidth > window.innerWidth,
+        exportRight: document.querySelector('#btnEditExport').getBoundingClientRect().right,
+        mainRight: document.querySelector('.main').getBoundingClientRect().right
+      })`,
+      returnByValue: true
+    })).result.value || '{}');
+    ok('平板视口默认收起曲目栏且工具栏无横向溢出',
+      !tabletInit.drawerOpen && tabletInit.expandedAttr === 'false' && !tabletInit.docOverflow &&
+      tabletInit.exportRight <= tabletInit.mainRight + 1,
+      JSON.stringify(tabletInit));
+
+    await cdp.send('Runtime.evaluate', { expression: `document.querySelector('#btnSidebar').click()` });
+    await sleep(220);
+    const tabletOpen = JSON.parse((await cdp.send('Runtime.evaluate', {
+      expression: `JSON.stringify({
+        drawerOpen: document.querySelector('#appRoot').classList.contains('is-sidebar-open'),
+        sidebarLeft: document.querySelector('#sidebarPanel').getBoundingClientRect().left,
+        sidebarWidth: document.querySelector('#sidebarPanel').getBoundingClientRect().width
+      })`,
+      returnByValue: true
+    })).result.value || '{}');
+    ok('平板端点击顶栏按钮可展开曲目抽屉',
+      tabletOpen.drawerOpen && tabletOpen.sidebarLeft >= 0 && tabletOpen.sidebarWidth >= 240,
+      JSON.stringify(tabletOpen));
+    await cdp.send('Runtime.evaluate', { expression: `document.querySelector('#btnSidebarClose').click()` });
+    await sleep(220);
+
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true });
+    await sleep(180);
+    const phoneCheck = JSON.parse((await cdp.send('Runtime.evaluate', {
+      expression: `JSON.stringify({
+        docOverflow: document.documentElement.scrollWidth > window.innerWidth,
+        rollHeadHeight: document.querySelector('.roll-head').getBoundingClientRect().height,
+        exportRight: document.querySelector('#btnEditExport').getBoundingClientRect().right,
+        zoomRight: document.querySelector('#zoom').getBoundingClientRect().right,
+        mainRight: document.querySelector('.main').getBoundingClientRect().right
+      })`,
+      returnByValue: true
+    })).result.value || '{}');
+    ok('手机视口编辑区工具栏自动分行且无水平溢出',
+      !phoneCheck.docOverflow && phoneCheck.rollHeadHeight > 42 &&
+      phoneCheck.exportRight <= phoneCheck.mainRight + 1 && phoneCheck.zoomRight <= phoneCheck.mainRight + 1,
+      JSON.stringify(phoneCheck));
+
+    await cdp.send('Runtime.evaluate', { expression: `document.querySelector('#btnSidebar').click()` });
+    await sleep(220);
+    await cdp.send('Runtime.evaluate', {
+      expression: `(function(){
+        var lis = document.querySelectorAll('#scoreList li[data-id]');
+        if (lis.length > 0) lis[0].click();
+      })()`
+    });
+    await sleep(220);
+    const phoneSelectClose = JSON.parse((await cdp.send('Runtime.evaluate', {
+      expression: `JSON.stringify({
+        drawerOpen: document.querySelector('#appRoot').classList.contains('is-sidebar-open'),
+        expandedAttr: document.querySelector('#btnSidebar').getAttribute('aria-expanded')
+      })`,
+      returnByValue: true
+    })).result.value || '{}');
+    ok('手机端在抽屉选择曲目后自动收起抽屉',
+      !phoneSelectClose.drawerOpen && phoneSelectClose.expandedAttr === 'false',
+      JSON.stringify(phoneSelectClose));
+
+    await cdp.send('Emulation.clearDeviceMetricsOverride');
+    await sleep(100);
+
     await cdp.send('Runtime.evaluate', {
       expression: `document.querySelector('#btnClearList').click()`
     });

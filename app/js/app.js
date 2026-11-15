@@ -47,6 +47,7 @@
   var el = {};
   function cacheDom() {
     [
+      'appRoot', 'btnSidebar', 'btnSidebarClose', 'sidebarPanel', 'sidebarBackdrop',
       'btnNewScore', 'btnPickFiles', 'btnPickDir', 'dropzone', 'fileInput', 'dirInput',
       'importProgress', 'importBar', 'importText',
       'search', 'listCount', 'btnClearList', 'scoreList',
@@ -3014,6 +3015,7 @@
         return;
       }
       if (ev.target && ev.target.isContentEditable) return;
+      if (isCompactViewport()) setSidebarOpen(false);
       if (state.selectedId === id && state.current) return;
       selectEntry(id);
     });
@@ -3025,8 +3027,24 @@
       startInlineListRename(li, parseInt(li.getAttribute('data-id'), 10));
     });
 
+    if (el.btnSidebar) {
+      el.btnSidebar.addEventListener('click', function () {
+        setSidebarOpen(!isSidebarOpen());
+      });
+    }
+    if (el.btnSidebarClose) {
+      el.btnSidebarClose.addEventListener('click', function () { setSidebarOpen(false); });
+    }
+    if (el.sidebarBackdrop) {
+      el.sidebarBackdrop.addEventListener('click', function () { setSidebarOpen(false); });
+    }
+    window.addEventListener('resize', syncSidebarUi);
+
     if (el.btnNewScore) {
-      el.btnNewScore.addEventListener('click', function () { createNewScore(); });
+      el.btnNewScore.addEventListener('click', function () {
+        createNewScore();
+        if (isCompactViewport()) setSidebarOpen(false);
+      });
     }
     el.btnPickFiles.addEventListener('click', function () { el.fileInput.click(); });
     el.btnPickDir.addEventListener('click', function () { el.dirInput.click(); });
@@ -3261,6 +3279,11 @@
       }
       return;
     }
+    if (e.key === 'Escape' && isCompactViewport() && isSidebarOpen()) {
+      e.preventDefault();
+      setSidebarOpen(false);
+      return;
+    }
     if (e.key === '?' || e.key === 'F1') {
       if (el.helpModal) {
         e.preventDefault();
@@ -3464,6 +3487,38 @@
     updateTrackNav();
   }
 
+  var sidebarDesktopOpen = true;
+  var sidebarDrawerOpen = false;
+
+  function isCompactViewport() {
+    return typeof window !== 'undefined' && window.innerWidth <= 900;
+  }
+
+  function isSidebarOpen() {
+    return isCompactViewport() ? sidebarDrawerOpen : sidebarDesktopOpen;
+  }
+
+  function syncSidebarUi() {
+    if (!el.appRoot) return;
+    var compact = isCompactViewport();
+    var open = compact ? sidebarDrawerOpen : sidebarDesktopOpen;
+    el.appRoot.classList.toggle('is-sidebar-open', compact && open);
+    el.appRoot.classList.toggle('is-sidebar-collapsed', !compact && !open);
+    if (el.sidebarBackdrop) el.sidebarBackdrop.hidden = !(compact && open);
+    if (el.btnSidebar) {
+      el.btnSidebar.setAttribute('aria-expanded', open ? 'true' : 'false');
+      el.btnSidebar.classList.toggle('is-on', open);
+      el.btnSidebar.title = open ? '收起曲目栏' : '展开曲目栏';
+    }
+  }
+
+  function setSidebarOpen(open) {
+    if (isCompactViewport()) sidebarDrawerOpen = !!open;
+    else sidebarDesktopOpen = !!open;
+    syncSidebarUi();
+    requestAnimationFrame(function () { drawRoll(currentScoreMs()); });
+  }
+
   function updatePlayKeysBtn() {
     if (!el.btnPlayKeys) return;
     el.btnPlayKeys.classList.toggle('is-on', !!state.playKeys);
@@ -3505,6 +3560,7 @@
     updateEditBar();
     setMode(true);
     bind();
+    syncSidebarUi();
     requestAnimationFrame(frame);
 
     restoreWorkspaceEntries(saved);
