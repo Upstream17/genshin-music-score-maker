@@ -71,7 +71,6 @@ python tools/add_songs.py "path/to/song.mid" --name "曲名" --outdir output
 ├── skill/                ★ AI 驱动 MIDI → 21 键 JSON 编配与验收 Skill（方法论与分析脚本）
 ├── tools/                MIDI 转换、整体移调、试听渲染与静态站构建工具
 ├── library/              ★ 人工挑选的成品示范曲库（18 首，供工具演示与网页端在线试听）
-├── docs/                 BetterGI 源码级规格与音源合规调研
 ├── LICENSE               GPL-3.0
 └── NOTICE.md             ★ 来源与版权声明，开源前必读
 ```
