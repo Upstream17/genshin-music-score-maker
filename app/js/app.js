@@ -61,7 +61,7 @@
       'modePlay', 'modeEdit',
       'editBar', 'editInfo', 'btnTimeLeft', 'btnTimeRight', 'btnPitchDown', 'btnPitchUp',
       'btnDurDown', 'btnDurUp', 'btnDel', 'btnRippleCut', 'btnInsertGap', 'btnDeselect', 'editSnap',
-      'btnEditUndo', 'btnEditReset', 'btnEditExport',
+      'btnEditUndo', 'btnEditReset', 'btnEditSave', 'btnEditExport',
       'roll', 'rollHint', 'zoom', 'zoomVal',
       'instrument', 'volume', 'btnLoadSamples', 'sampleInput', 'sampleStat',
       'diag', 'liveText', 'toast'
@@ -675,17 +675,35 @@
       //    在本地 file:// 协议和各种浏览器下均可直接读取，绝不会遭遇 FileSystemEntry.file 的 EncodingError！
       if (!hasDir) {
         var directFiles = [];
-        if (dt.files && dt.files.length) {
-          directFiles = Array.prototype.slice.call(dt.files);
-        } else {
-          for (var j = 0; j < items.length; j++) {
-            if (items[j].kind === 'file') {
-              var df = items[j].getAsFile ? items[j].getAsFile() : null;
-              if (df) directFiles.push(df);
+        var handlePromises = [];
+        var canFsHandle = typeof window !== 'undefined' && window.location && window.location.protocol !== 'file:';
+        for (var j = 0; j < items.length; j++) {
+          if (items[j].kind === 'file') {
+            var df = items[j].getAsFile ? items[j].getAsFile() : null;
+            if (!df && dt.files && dt.files[j]) df = dt.files[j];
+            if (df) {
+              directFiles.push(df);
+              if (canFsHandle && typeof items[j].getAsFileSystemHandle === 'function') {
+                (function (fileRef, itemRef) {
+                  handlePromises.push(
+                    Promise.resolve()
+                      .then(function () { return itemRef.getAsFileSystemHandle(); })
+                      .then(function (h) { if (h && h.kind === 'file') fileRef._fileHandle = h; })
+                      .catch(function () { })
+                  );
+                })(df, items[j]);
+              }
             }
           }
         }
-        resolve(directFiles);
+        if (!directFiles.length && dt.files && dt.files.length) {
+          directFiles = Array.prototype.slice.call(dt.files);
+        }
+        if (handlePromises.length) {
+          Promise.all(handlePromises).then(function () { resolve(directFiles); });
+        } else {
+          resolve(directFiles);
+        }
         return;
       }
 
@@ -744,6 +762,7 @@
     state.entries.forEach(function (e) { seen[e.path] = true; });
 
     var added = 0, updated = 0, failed = 0, errors = [];
+    var singleTargetEntry = null;
 
     for (var i = 0; i < picked.json.length; i++) {
       var f = picked.json[i];
@@ -778,6 +797,7 @@
           existing.edited = false;
           existing.renamed = false;
           existing.workingNotes = null;
+          if (f._fileHandle) existing.fileHandle = f._fileHandle;
           updated++;
 
           if (state.selectedId === existing.id) {
@@ -787,6 +807,9 @@
             });
             state.current = sc;
             state.currentEntry = existing;
+            state.edit.undo = [];
+            state.edit.dirty = false;
+            clearSelection();
             recomputeDerived();
             renderDiag(existing, sc);
             updateEditBar();
@@ -797,8 +820,9 @@
               sc.stats.noteCount + ' 音', fmtDur(sc.stats.durationMs)].join(' · ');
             if (el.tTotal) el.tTotal.textContent = fmtTime(sc.stats.durationMs);
           }
+          singleTargetEntry = existing;
         } else {
-          state.entries.push({
+          var newEntry = {
             id: state.nextId++,
             path: path,
             fileName: f.name,
@@ -810,8 +834,11 @@
             noteCount: sc.stats ? sc.stats.noteCount : 0,
             durationMs: sc.stats ? sc.stats.durationMs : 0,
             instrument: sc.instrument || '',
-            text: text
-          });
+            text: text,
+            fileHandle: f._fileHandle || null
+          };
+          state.entries.push(newEntry);
+          singleTargetEntry = newEntry;
           added++;
         }
       } catch (e) {
@@ -834,7 +861,9 @@
     toast(msg, failed ? 'err' : 'ok', 4200);
 
     if (errors.length) console.warn('导入失败样例：', errors);
-    if (state.entries.length && !state.selectedId) {
+    if (picked.json.length === 1 && singleTargetEntry && singleTargetEntry.ok && state.selectedId !== singleTargetEntry.id) {
+      selectEntry(singleTargetEntry.id);
+    } else if (state.entries.length && !state.selectedId) {
       var firstOk = state.entries.filter(function (e) { return e.ok; })[0];
       if (firstOk) selectEntry(firstOk.id);
     }
@@ -2594,6 +2623,13 @@
 
     if (el.btnEditUndo) el.btnEditUndo.disabled = !state.edit.undo.length;
     if (el.btnEditReset) el.btnEditReset.disabled = !hasScore;
+    if (el.btnEditSave) {
+      el.btnEditSave.disabled = !hasScore;
+      el.btnEditSave.classList.toggle('is-dirty', !!(hasScore && state.edit.dirty));
+      el.btnEditSave.title = (state.currentEntry && state.currentEntry.fileHandle)
+        ? '直接保存覆盖当前原文件：' + state.currentEntry.fileName + '（Ctrl+S）'
+        : '保存覆盖当前文件（Ctrl+S）';
+    }
     if (el.btnEditExport) el.btnEditExport.disabled = !hasScore;
 
     if (el.btnTimeLeft) el.btnTimeLeft.disabled = !hasSel;
@@ -2835,8 +2871,8 @@
     toast('已全选 ' + state.current.notes.length + ' 个音符', 'ok', 1500);
   }
 
-  /** 把当前 notes 导出成 BetterGI 的 midi 型 JSON（ticks=1000,bpm=60 ⇒ 1 tick = 1ms） */
-  function buildExportJson() {
+  /** 把当前 notes 序列化为 BetterGI 的 midi 型 JSON（ticks=1000,bpm=60 ⇒ 1 tick = 1ms） */
+  function buildScoreJson(preserveMeta) {
     var sc = state.current;
     var evs = [];
     sc.notes.forEach(function (n) {
@@ -2852,7 +2888,22 @@
     });
     var src = state.sourceJson || {};
     var isFreshOrRenamed = !!(state.currentEntry && (state.currentEntry.isNew || state.currentEntry.renamed));
-    var baseName = sc.name || '未命名曲谱';
+    var baseName = sc.name || src.name || '未命名曲谱';
+    if (preserveMeta) {
+      var out = {
+        name: baseName,
+        author: src.author != null ? src.author : (sc.author || ''),
+        instrument: src.instrument || sc.instrument || '风物之诗琴',
+        description: src.description || ('由「风物之诗琴 · 曲谱工坊」保存｜' +
+          sc.notes.length + ' 音｜时长 ' + Math.round(sc.stats.durationMs / 1000) + 's')
+      };
+      if (src.time_signature) out.time_signature = src.time_signature;
+      out.type = 'midi';
+      out.bpm = 60;
+      out.ticks = 1000;
+      out.notes = parts.join('|');
+      return out;
+    }
     return {
       name: isFreshOrRenamed ? baseName : (baseName + '（编辑）'),
       author: src.author || '',
@@ -2866,21 +2917,123 @@
     };
   }
 
-  function exportEdited() {
+  function buildExportJson() {
+    return buildScoreJson(false);
+  }
+
+  function downloadTextAsJson(filename, text) {
+    var blob = new Blob([text], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+  }
+
+  async function writeTextToHandle(handle, text) {
+    if (!handle || typeof handle.createWritable !== 'function') {
+      throw new Error('当前环境不支持文件写入句柄');
+    }
+    if (typeof handle.queryPermission === 'function') {
+      var perm = await handle.queryPermission({ mode: 'readwrite' });
+      if (perm !== 'granted' && typeof handle.requestPermission === 'function') {
+        perm = await handle.requestPermission({ mode: 'readwrite' });
+      }
+      if (perm !== 'granted') throw new Error('未获得文件写入权限');
+    }
+    var writable = await handle.createWritable();
+    await writable.write(text);
+    await writable.close();
+  }
+
+  function finalizeLocalSave(entry, json, text) {
+    if (!entry) return;
+    entry.text = text;
+    entry.isNew = false;
+    entry.edited = false;
+    if (state.current) state.current.isNew = false;
+    state.sourceJson = json;
+    state.edit.dirty = false;
+    renderList();
+    updateEditBar();
+    scheduleSaveWorkspace();
+  }
+
+  var savingBusy = false;
+  /** 保存：直接覆盖当前绑定原文件（Ctrl+S）；首次无句柄时弹出定位框并绑定 */
+  async function saveCurrentScore() {
+    if (!state.current || !state.currentEntry || savingBusy) return;
+    if (el.npTitle && document.activeElement === el.npTitle) {
+      el.npTitle.blur();
+    }
+    savingBusy = true;
+    try {
+      var entry = state.currentEntry;
+      var json = buildScoreJson(true);
+      var text = JSON.stringify(json, null, 2);
+      var safeName = (entry.fileName || ((json.name || '曲谱').replace(/[\\/:*?"<>|]/g, '_') + '.json'));
+
+      if (entry.fileHandle) {
+        await writeTextToHandle(entry.fileHandle, text);
+        finalizeLocalSave(entry, json, text);
+        toast('已保存覆盖原文件：' + safeName, 'ok', 3200);
+        return;
+      }
+
+      if (typeof window.showSaveFilePicker === 'function') {
+        try {
+          var handle = await window.showSaveFilePicker({
+            suggestedName: safeName,
+            types: [{ description: 'BetterGI 琴谱 JSON', accept: { 'application/json': ['.json'] } }]
+          });
+          await writeTextToHandle(handle, text);
+          entry.fileHandle = handle;
+          if (handle.name) entry.fileName = handle.name;
+          finalizeLocalSave(entry, json, text);
+          toast('已保存到：' + entry.fileName + '（后续 Ctrl+S 直接覆盖）', 'ok', 4200);
+          return;
+        } catch (err) {
+          if (err && err.name === 'AbortError') return;
+        }
+      }
+
+      downloadTextAsJson(safeName, text);
+      saveWorkspaceNow();
+      toast('当前环境不支持直接覆写本地文件，已下载：' + safeName, 'ok', 4500);
+    } catch (e) {
+      toast('保存失败：' + ((e && e.message) || e), 'err', 4500);
+    } finally {
+      savingBusy = false;
+    }
+  }
+
+  /** 导出：另存为新 JSON 副本（不修改当前绑定原文件句柄） */
+  async function exportEdited() {
     if (!state.current) return;
     var json = buildExportJson();
-    var text = JSON.stringify(json, null, 1);
+    var text = JSON.stringify(json, null, 2);
+    var dlName = (json.name || '曲谱').replace(/[\\/:*?"<>|]/g, '_') + '.json';
+
+    if (typeof window.showSaveFilePicker === 'function') {
+      try {
+        var handle = await window.showSaveFilePicker({
+          suggestedName: dlName,
+          types: [{ description: 'BetterGI 琴谱 JSON', accept: { 'application/json': ['.json'] } }]
+        });
+        await writeTextToHandle(handle, text);
+        toast('已另存为：' + (handle.name || dlName), 'ok', 4200);
+        return;
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+      }
+    }
+
     try {
-      var blob = new Blob([text], { type: 'application/json' });
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url;
-      a.download = (json.name || '曲谱').replace(/[\\/:*?"<>|]/g, '_') + '.json';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
-      toast('已导出：' + a.download, 'ok', 5000);
+      downloadTextAsJson(dlName, text);
+      toast('已导出：' + dlName, 'ok', 5000);
     } catch (e) {
       toast('导出失败：' + ((e && e.message) || e), 'err');
     }
@@ -2889,6 +3042,28 @@
       var check = window.BGIParse.parseScore(JSON.parse(text));
       console.log('[导出校验] ok=' + check.ok + ' 音符=' + (check.ok ? check.stats.noteCount : check.error));
     } catch (_) { }
+  }
+
+  async function openFilesWithHandles() {
+    if (typeof window.showOpenFilePicker === 'function') {
+      try {
+        var handles = await window.showOpenFilePicker({
+          multiple: true,
+          types: [{ description: 'BetterGI 琴谱 JSON', accept: { 'application/json': ['.json'] } }]
+        });
+        var files = [];
+        for (var i = 0; i < handles.length; i++) {
+          var f = await handles[i].getFile();
+          f._fileHandle = handles[i];
+          files.push(f);
+        }
+        if (files.length) await importFiles(files);
+        return;
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+      }
+    }
+    el.fileInput.click();
   }
 
   /* ═══════════════════ 模式（无模式合一） ═══════════════════ */
@@ -3126,7 +3301,7 @@
         if (isCompactViewport()) setSidebarOpen(false);
       });
     }
-    el.btnPickFiles.addEventListener('click', function () { el.fileInput.click(); });
+    el.btnPickFiles.addEventListener('click', function () { openFilesWithHandles(); });
     el.btnPickDir.addEventListener('click', function () { el.dirInput.click(); });
     el.fileInput.addEventListener('change', function (e) { importFiles(e.target.files); e.target.value = ''; });
     el.dirInput.addEventListener('change', function (e) { importFiles(e.target.files); e.target.value = ''; });
@@ -3136,10 +3311,12 @@
 
     el.search.addEventListener('input', function () { state.filter = el.search.value; renderList(); });
     el.btnClearList.addEventListener('click', function () {
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
       state.entries = [];
       hiddenShowcasePaths = {};
       newScoreSeq = 0;
       resetToEmptyState();
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
       try {
         if (typeof localStorage !== 'undefined' && localStorage) localStorage.removeItem(WORKSPACE_KEY);
       } catch (_) { }
@@ -3278,7 +3455,8 @@
     });
     el.btnEditUndo.addEventListener('click', undoEdit);
     el.btnEditReset.addEventListener('click', resetEdit);
-    el.btnEditExport.addEventListener('click', exportEdited);
+    if (el.btnEditSave) el.btnEditSave.addEventListener('click', saveCurrentScore);
+    if (el.btnEditExport) el.btnEditExport.addEventListener('click', exportEdited);
 
     /* 拖放 */
     var dragDepth = 0;
@@ -3350,6 +3528,12 @@
   }
 
   function onKeyDown(e) {
+    /* 保存：Ctrl/⌘ + S（即使焦点在曲名编辑框里也直接保存） */
+    if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+      e.preventDefault();
+      saveCurrentScore();
+      return;
+    }
     if (isTypingTarget(e.target)) return;
 
     if (el.helpModal && !el.helpModal.hidden) {
@@ -3618,7 +3802,7 @@
       el.btnTheme.setAttribute('aria-label', label);
       el.btnTheme.title = label;
     }
-    if (!skipRedraw && rCtx) drawRoll(currentScoreMs());
+    if (!skipRedraw && state.rollCtx) drawRoll(currentScoreMs());
   }
 
   function init() {

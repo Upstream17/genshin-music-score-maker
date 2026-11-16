@@ -660,14 +660,16 @@ function pageScript(scoreUrls) {
         drawerOpen: document.querySelector('#appRoot').classList.contains('is-sidebar-open'),
         expandedAttr: document.querySelector('#btnSidebar').getAttribute('aria-expanded'),
         docOverflow: document.documentElement.scrollWidth > window.innerWidth,
+        resetRight: document.querySelector('#btnEditReset').getBoundingClientRect().right,
         exportRight: document.querySelector('#btnEditExport').getBoundingClientRect().right,
+        winWidth: window.innerWidth,
         mainRight: document.querySelector('.main').getBoundingClientRect().right
       })`,
       returnByValue: true
     })).result.value || '{}');
     ok('平板视口默认收起曲目栏且工具栏无横向溢出',
       !tabletInit.drawerOpen && tabletInit.expandedAttr === 'false' && !tabletInit.docOverflow &&
-      tabletInit.exportRight <= tabletInit.mainRight + 1,
+      tabletInit.resetRight <= tabletInit.mainRight + 1 && tabletInit.exportRight <= tabletInit.winWidth + 1,
       JSON.stringify(tabletInit));
 
     const btnRectTablet = JSON.parse((await cdp.send('Runtime.evaluate', {
@@ -801,6 +803,7 @@ function pageScript(scoreUrls) {
       expression: `JSON.stringify({
         docOverflow: document.documentElement.scrollWidth > window.innerWidth,
         rollHeadHeight: document.querySelector('.roll-head').getBoundingClientRect().height,
+        resetRight: document.querySelector('#btnEditReset').getBoundingClientRect().right,
         exportRight: document.querySelector('#btnEditExport').getBoundingClientRect().right,
         zoomRight: document.querySelector('#zoom').getBoundingClientRect().right,
         mainRight: document.querySelector('.main').getBoundingClientRect().right
@@ -809,7 +812,8 @@ function pageScript(scoreUrls) {
     })).result.value || '{}');
     ok('手机视口编辑区工具栏自动分行且无水平溢出',
       !phoneCheck.docOverflow && phoneCheck.rollHeadHeight > 42 &&
-      phoneCheck.exportRight <= phoneCheck.mainRight + 1 && phoneCheck.zoomRight <= phoneCheck.mainRight + 1,
+      phoneCheck.resetRight <= phoneCheck.mainRight + 1 && phoneCheck.exportRight <= 391 &&
+      phoneCheck.zoomRight <= phoneCheck.mainRight + 1,
       JSON.stringify(phoneCheck));
 
     await cdp.send('Runtime.evaluate', { expression: `document.querySelector('#btnSidebar').click()` });
@@ -855,6 +859,119 @@ function pageScript(scoreUrls) {
 
     await cdp.send('Emulation.clearDeviceMetricsOverride');
     await sleep(100);
+
+    /* ───────── 12. 顶栏「保存（Ctrl+S 覆盖原文件）」与「导出（另存为）」重构验收 ───────── */
+    const saveExportRes = JSON.parse((await cdp.send('Runtime.evaluate', {
+      expression: `(async function(){
+        var out = {};
+        out.saveInTop = !!document.querySelector('.top #btnEditSave');
+        out.exportInTop = !!document.querySelector('.top #btnEditExport');
+        out.exportInEditOps = !!document.querySelector('.edit-ops #btnEditExport');
+
+        var baseDoc = {
+          name: '顶栏保存测试',
+          author: '原著',
+          instrument: '风物之诗琴',
+          description: '原始描述保留验证',
+          type: 'midi',
+          bpm: 60,
+          ticks: 1000,
+          notes: 'DZ200|UZ400|DG400|UG400'
+        };
+        var origDiskText = JSON.stringify(baseDoc);
+        var origWriteCount = 0;
+        var origHandle = {
+          kind: 'file',
+          name: 'top_save_test.json',
+          queryPermission: async function(){ return 'granted'; },
+          requestPermission: async function(){ return 'granted'; },
+          getFile: async function(){
+            return new File([origDiskText], 'top_save_test.json', { type: 'application/json' });
+          },
+          createWritable: async function(){
+            return {
+              write: async function(txt){ origDiskText = String(txt); origWriteCount++; },
+              close: async function(){}
+            };
+          }
+        };
+
+        var copyDiskText = '';
+        var copyWriteCount = 0;
+        var copyHandle = {
+          kind: 'file',
+          name: 'top_save_copy.json',
+          queryPermission: async function(){ return 'granted'; },
+          requestPermission: async function(){ return 'granted'; },
+          createWritable: async function(){
+            return {
+              write: async function(txt){ copyDiskText = String(txt); copyWriteCount++; },
+              close: async function(){}
+            };
+          }
+        };
+
+        window.showOpenFilePicker = async function(){ return [origHandle]; };
+        window.showSaveFilePicker = async function(){ return copyHandle; };
+
+        document.querySelector('#btnPickFiles').click();
+        for (var i = 0; i < 40; i++) {
+          await new Promise(function(r){ setTimeout(r, 50); });
+          if (document.querySelector('#npTitle').textContent === '顶栏保存测试') break;
+        }
+        out.loadedTitle = document.querySelector('#npTitle').textContent;
+
+        /* 新增一个音符触发未保存状态 */
+        var cv = document.querySelector('#roll');
+        var rr = cv.getBoundingClientRect();
+        cv.dispatchEvent(new MouseEvent('click', { clientX: Math.round(rr.left + rr.width * 0.65), clientY: Math.round(rr.top + rr.height * 0.25), bubbles: true }));
+        await new Promise(function(r){ setTimeout(r, 100); });
+        out.dirtyBeforeSave = document.querySelector('#btnEditSave').classList.contains('is-dirty');
+
+        /* Ctrl+S 直接覆盖原文件 */
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 's', code: 'KeyS', ctrlKey: true, bubbles: true }));
+        for (var j = 0; j < 30; j++) {
+          await new Promise(function(r){ setTimeout(r, 50); });
+          if (origWriteCount > 0 && !document.querySelector('#btnEditSave').classList.contains('is-dirty')) break;
+        }
+        var savedObj = JSON.parse(origDiskText);
+        var parsedSaved = window.BGIParse.parseScore(savedObj);
+        out.origWriteCount = origWriteCount;
+        out.dirtyAfterSave = document.querySelector('#btnEditSave').classList.contains('is-dirty');
+        out.savedNamePreserved = savedObj.name === '顶栏保存测试';
+        out.savedDescPreserved = savedObj.description === '原始描述保留验证';
+        out.savedNoteCount = parsedSaved.ok ? parsedSaved.stats.noteCount : -1;
+
+        /* 再改一音，点击顶栏「导出」另存为副本，验证不覆盖原文件且不修改原绑定句柄 */
+        cv.dispatchEvent(new MouseEvent('click', { clientX: Math.round(rr.left + rr.width * 0.78), clientY: Math.round(rr.top + rr.height * 0.30), bubbles: true }));
+        await new Promise(function(r){ setTimeout(r, 100); });
+        document.querySelector('#btnEditExport').click();
+        for (var k = 0; k < 30; k++) {
+          await new Promise(function(r){ setTimeout(r, 50); });
+          if (copyWriteCount > 0) break;
+        }
+        var copyObj = copyDiskText ? JSON.parse(copyDiskText) : {};
+        out.copyWriteCount = copyWriteCount;
+        out.origWriteAfterExport = origWriteCount;
+        out.copyName = copyObj.name || '';
+        return JSON.stringify(out);
+      })()`,
+      awaitPromise: true,
+      returnByValue: true
+    })).result.value || '{}');
+
+    ok('顶栏放置「保存」和「导出」按钮，且编辑区不再包含导出按钮',
+      saveExportRes.saveInTop && saveExportRes.exportInTop && !saveExportRes.exportInEditOps,
+      JSON.stringify(saveExportRes));
+    ok('Ctrl+S 直接覆盖当前原文件（保留原曲名与描述并清除未保存标记）',
+      saveExportRes.loadedTitle === '顶栏保存测试' && saveExportRes.dirtyBeforeSave &&
+      saveExportRes.origWriteCount === 1 && !saveExportRes.dirtyAfterSave &&
+      saveExportRes.savedNamePreserved && saveExportRes.savedDescPreserved && saveExportRes.savedNoteCount === 3,
+      JSON.stringify(saveExportRes));
+    ok('顶栏「导出」作为另存为新文件，不覆写原文件句柄',
+      saveExportRes.copyWriteCount === 1 && saveExportRes.origWriteAfterExport === 1 &&
+      /（编辑）/.test(saveExportRes.copyName),
+      JSON.stringify(saveExportRes));
 
     await cdp.send('Runtime.evaluate', {
       expression: `document.querySelector('#btnClearList').click()`

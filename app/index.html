@@ -166,7 +166,17 @@ html, body {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+}
+.btn-top-save.is-dirty::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: middle;
 }
 .top-link {
   display: inline-flex;
@@ -1151,7 +1161,10 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
   .edit-ops .vrule { display: none; }
 }
 @media (max-width: 640px) {
-  .top { gap: 10px; padding: 0 12px; }
+  .top { gap: 8px; padding: 0 12px; }
+  .top-right { gap: 6px; }
+  .top-right .status,
+  .top-right .vrule { display: none; }
   .brand-title { font-size: 14.5px; letter-spacing: .04em; }
   .main { padding: 0 12px 14px; }
   .song { padding: 12px 0 8px; gap: 12px; }
@@ -1252,6 +1265,10 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
 
     <div class="top-right">
       <span id="liveText" class="status">空闲</span>
+      <span class="vrule"></span>
+      <button id="btnEditSave" class="btn btn-sm btn-ink btn-top-save" type="button" title="直接保存覆盖当前原文件（Ctrl+S）" disabled>保存</button>
+      <button id="btnEditExport" class="btn btn-sm" type="button" title="另存为 / 导出新 JSON" disabled>导出</button>
+      <span class="vrule"></span>
       <button id="btnTheme" class="btn top-theme-btn" type="button" aria-pressed="false" aria-label="切换夜间模式" title="切换夜间模式">
         <svg class="ico-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
         <svg class="ico-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
@@ -1451,7 +1468,6 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
               </select>
               <button id="btnEditUndo" class="btn btn-xs" title="撤销（Ctrl+Z）" disabled>撤销</button>
               <button id="btnEditReset" class="btn btn-xs" title="还原为原始曲谱" disabled>还原</button>
-              <button id="btnEditExport" class="btn btn-xs btn-ink" title="导出 JSON" disabled>导出</button>
             </div>
 
             <span class="vrule"></span>
@@ -1500,6 +1516,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { background: var(--acce
           <li><b>主画布框选音符（类 Excel 选单元格）</b>：在主画布网格空白处按住左键拖拽即可<b>矩形框选</b>多个音符（或 <span class="help-kbd">Shift</span>+点击加减选、<span class="help-kbd">Ctrl+A</span> 全选）。按住任一已选音符拖动可整组平移时间/音高，拖右边缘可批量调整时值，按 <span class="help-kbd">Delete</span> 仅删除选中的音符（其他音符位置不变）。</li>
           <li><b>顶部时间轴拖选（类 Excel 选整列）</b>：在上方<b>时间轴表头</b>按住左键横向拖拽，即可选中<b>整个时间段空间</b>（贯穿全列高亮）；此时按 <span class="help-kbd">Delete</span> 或点击工具栏 <b>「✂ 删时间段」</b>，即可直接删掉这一整段时间（含空白与音符），并将后续所有音符<b>自动整体前移填补</b>。</li>
           <li><b>时间轴浏览与曲目管理</b>：轻点顶部时间轴表头跳转进度，滚轮或右键拖拽平移时间轴（<span class="help-kbd">Ctrl</span>+滚轮缩放窗口）；点击主标题或歌单项右侧 <span class="help-kbd">✎</span> 内联改名，<span class="help-kbd">×</span> 单独删除曲目。</li>
+          <li><b>保存与另存为（顶栏）</b>：在 Chrome / Edge（在线版）通过「导入曲谱」或拖放打开本地 <code>.json</code> 后，按 <span class="help-kbd">Ctrl+S</span> 或点顶栏 <b>「保存」</b> 可直接覆盖原文件；首次保存未绑定句柄的曲谱会弹出一次定位框，之后 <span class="help-kbd">Ctrl+S</span> 均静默覆盖。点顶栏 <b>「导出」</b> 则可另存为新副本。</li>
         </ul>
       </div>
     </div>
