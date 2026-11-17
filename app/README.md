@@ -151,6 +151,7 @@ app/
 ├── tests/
 │   ├── integration.test.js  契约 + 全库不变量
 │   ├── parse.test.js        解析器全库回归
+│   ├── serialize.test.js    序列化回归（U@0 占位符 / 往返收敛）
 │   ├── audio.test.js        音频引擎 / 文件名→音高映射
 │   ├── realtime.test.js     ★ 真实时间端到端（CDP）
 │   ├── ui.test.js           ★ 新功能验收（音源/键盘弹奏/编辑/连播）
@@ -176,6 +177,7 @@ ES module 和 `fetch`，而「双击就能用」是这个工具的核心价值�
 ```powershell
 node app/tests/integration.test.js            # 契约 + 全库不变量
 node app/tests/parse.test.js library          # 解析器示范曲库（19 首）
+node app/tests/serialize.test.js library      # 序列化回归（U@0 缺一不可，往返不漂移）
 node app/tests/audio.test.js                  # 音频引擎
 node app/tests/realtime.test.js               # 真实时间端到端（需 Chrome）
 node app/tests/ui.test.js                     # 音色 / 键盘弹奏 / 编辑 / 连播 / 多端适配（需 Chrome）

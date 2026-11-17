@@ -1613,6 +1613,57 @@
   }
 
   /* ------------------------------------------------------------------ *
+   * 序列化：音符模型 -> BetterGI midi notes 字符串
+   * ------------------------------------------------------------------ */
+
+  /**
+   * 把音符模型 [{start, end, key}] 序列化成 BetterGI 的 midi `notes` 字符串。
+   *
+   * 必须与 parseScore 的 midi 分支（也就是 BetterGI 的 ParseMidiJsonTimeline）对齐：
+   *   1. 每个音 → 一次 D、一次 U；**同一时刻 U 必须排在 D 之前**；
+   *   2. 相邻两个 token 若是「U 同键 D」，中间插入 `U@0` 占位符。
+   *
+   * 第 2 条不能省：解析器有一条回拨规则 ——
+   *   `U<keys>` 的 delay >= 30ms 且下一个 token 是同键 `D` ⇒ cursor -= 30ms
+   *   （原文：这个 U 已经替后面的 D 计过 30ms 最小按压间隔）。
+   * 缺了占位符，含同键连击的谱面每一处都丢 30ms：总时长变短、密集段听着明显变快。
+   * `U@0` 的 dt=0，不占时间、不产生音符（解析时 keys === '@' 会被跳过），
+   * 只负责把 U 和后面的同键 D 隔开，同时让 A 分支（dt < 30 ⇒ +30ms）也不成立。
+   */
+  function buildMidiNotesString(notes) {
+    var evs = [];
+    (notes || []).forEach(function (n) {
+      evs.push({ t: Math.max(0, Math.round(n.start)), down: true, key: n.key });
+      evs.push({ t: Math.max(0, Math.round(n.end)), down: false, key: n.key });
+    });
+    // 同一时刻：U(0) 先、D(1) 后
+    evs.sort(function (a, b) {
+      return (a.t - b.t) || ((a.down ? 1 : 0) - (b.down ? 1 : 0));
+    });
+
+    var parts = [], prev = 0;
+    evs.forEach(function (e) {
+      var t = Math.max(e.t, prev);
+      parts.push((e.down ? 'D' : 'U') + e.key + (t - prev));
+      prev = t;
+    });
+
+    var out = [];
+    for (var i = 0; i < parts.length; i++) {
+      out.push(parts[i]);
+      if (i + 1 < parts.length) {
+        var a = parts[i], b = parts[i + 1];
+        if (a.charAt(0) === 'U' && b.charAt(0) === 'D') {
+          var ka = a.slice(1).replace(/\d+$/, '');
+          var kb = b.slice(1).replace(/\d+$/, '');
+          if (ka !== '@' && containsAny(ka, kb)) { out.push('U@0'); }
+        }
+      }
+    }
+    return out.join('|');
+  }
+
+  /* ------------------------------------------------------------------ *
    * 导出
    * ------------------------------------------------------------------ */
 
@@ -1625,6 +1676,7 @@
     SUPPORTED_KEYS: SUPPORTED_KEYS,
     pitchName: pitchName,
     parseScore: parseScore,
+    buildMidiNotesString: buildMidiNotesString,
     selfTest: selfTest
   };
 

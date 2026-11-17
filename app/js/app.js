@@ -2903,18 +2903,9 @@
   /** 把当前 notes 序列化为 BetterGI 的 midi 型 JSON（ticks=1000,bpm=60 ⇒ 1 tick = 1ms） */
   function buildScoreJson(preserveMeta) {
     var sc = state.current;
-    var evs = [];
-    sc.notes.forEach(function (n) {
-      evs.push([Math.max(0, Math.round(n.start)), 0, n.key]);
-      evs.push([Math.max(0, Math.round(n.end)), 1, n.key]);
-    });
-    evs.sort(function (a, b) { return (a[0] - b[0]) || (a[1] - b[1]); });
-    var cur = 0, parts = [];
-    evs.forEach(function (e) {
-      var d = Math.max(0, e[0] - cur);
-      cur = e[0];
-      parts.push((e[1] ? 'U' : 'D') + e[2] + d);
-    });
+    // 序列化统一交给 BGIParse：同刻 U 先于 D，且同键 U→D 之间自动插 U@0 占位符。
+    // 少了占位符，解析器会对每处同键连击回拨 30ms（总长变短、密集段变快）。
+    var notesStr = BGIParse.buildMidiNotesString(sc.notes);
     var src = state.sourceJson || {};
     var isFreshOrRenamed = !!(state.currentEntry && (state.currentEntry.isNew || state.currentEntry.renamed));
     var baseName = sc.name || src.name || '未命名曲谱';
@@ -2930,7 +2921,7 @@
       out.type = 'midi';
       out.bpm = 60;
       out.ticks = 1000;
-      out.notes = parts.join('|');
+      out.notes = notesStr;
       return out;
     }
     return {
@@ -2942,7 +2933,7 @@
       type: 'midi',
       bpm: 60,
       ticks: 1000,
-      notes: parts.join('|')
+      notes: notesStr
     };
   }
 
