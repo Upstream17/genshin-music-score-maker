@@ -36,21 +36,27 @@ INSTRUMENTS = [
     ('windsong_lyre', '风物之诗琴'),
     ('vintage_lyre', '老旧的诗琴'),
     ('floral_zither', '镜花之琴'),
-    ('floral_zither_old', '镜花之琴（旧版）'),
     ('harmonic_key', '谐律键琴'),
     ('leaping_spirit_piano', '跃律琴'),
     ('ukulele', '悠可琴'),
     ('lingering_euphonia', '余音'),
+    ('nightwind_horn', '晚风圆号'),
 ]
+
+# 持续吹奏/长音乐器的额外元数据（sustain 包络参数）
+SUSTAIN_META = {
+    'nightwind_horn': {'sustain': True, 'release': 0.12, 'minLength': 0.06},
+}
 
 DEFAULT_ID = 'windsong_lyre'
 
 HEADER_COMMON = """/* ==========================================================================
    {title}
    --------------------------------------------------------------------------
-   来源：https://github.com/JularDepick/WindsongLyre-Simulator.fork
-         （开源项目 WindsongLyre-Simulator 的 instruments/<id>/audio/）
-   转码：ffmpeg -ac 1 -ar 44100 -c:a libmp3lame -b:a 48k -t 2.2
+   来源：
+     - https://github.com/JularDepick/WindsongLyre-Simulator.fork（诗琴/古琴/键琴/悠可琴/余音）
+     - https://github.com/Specy/genshin-music（晚风圆号 NightwindHorn，Q-U / A-J 两排 14 键）
+   转码：ffmpeg -ac 1 -ar 44100 -c:a libmp3lame -b:a 48k（拨弦 2.2s / 圆号长音 8.0s）
 
    ⚠ 音频版权归 miHoYo 所有。仅供本机自用，**请勿再分发**。
    ⚠ 这些文件是**可选**的：删掉它们，播放器自动回退到内置合成音色。
@@ -75,11 +81,21 @@ def load_set(src_dir, inst_id):
 
 def render_set(inst_id, name, notes):
     body = ',\n'.join("      '%s': 'data:audio/mpeg;base64,%s'" % (n, b) for n, b in notes)
+    meta = SUSTAIN_META.get(inst_id)
+    meta_lines = ''
+    if meta:
+        meta_lines = (
+            "  sustain: %s,\n"
+            "  release: %s,\n"
+            "  minLength: %s,\n"
+            % ('true' if meta['sustain'] else 'false', meta['release'], meta['minLength'])
+        )
     return (
         "window.BGI_SAMPLE_SETS = window.BGI_SAMPLE_SETS || {};\n"
         "window.BGI_SAMPLE_SETS['%s'] = {\n"
         "  name: '%s',\n"
-        "  notes: {\n%s\n  }\n};\n" % (inst_id, name, body)
+        "%s"
+        "  notes: {\n%s\n  }\n};\n" % (inst_id, name, meta_lines, body)
     )
 
 
@@ -135,9 +151,15 @@ def main():
     # samples.js = 清单 + 默认音色
     entries = []
     for m in manifest:
+        meta = SUSTAIN_META.get(m['id'])
+        extra = ''
+        if meta:
+            extra = ", sustain: %s, release: %s, minLength: %s" % (
+                'true' if meta['sustain'] else 'false', meta['release'], meta['minLength']
+            )
         entries.append(
-            "  { id: '%s', name: '%s', file: %s, count: %d }"
-            % (m['id'], m['name'], ("'" + m['file'] + "'") if m['file'] else 'null', m['count'])
+            "  { id: '%s', name: '%s', file: %s, count: %d%s }"
+            % (m['id'], m['name'], ("'" + m['file'] + "'") if m['file'] else 'null', m['count'], extra)
         )
     header = HEADER_COMMON.format(title='音色清单 + 默认音色（风物之诗琴）')
     doc = (

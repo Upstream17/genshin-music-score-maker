@@ -6,7 +6,7 @@
 
 本项目是**非官方**的个人工具，与 miHoYo / HoYoverse、与 [BetterGI](https://github.com/babalae/better-genshin-impact)
 的开发者、与下列任何第三方项目**均无隶属或背书关系**。
-「原神 / Genshin Impact / 风物之诗琴 / 老旧的诗琴 / 镜花之琴 / 谐律键琴 / 跃律琴 / 悠可琴 / 余音」等游戏与乐器名称归其权利人所有，此处仅作**说明性使用**。
+「原神 / Genshin Impact / 风物之诗琴 / 老旧的诗琴 / 镜花之琴 / 谐律键琴 / 跃律琴 / 悠可琴 / 余音 / 晚风圆号」等游戏与乐器名称归其权利人所有，此处仅作**说明性使用**。
 
 ## 2. 代码许可：GPL-3.0
 
@@ -20,7 +20,8 @@
 ## 3. 音频：**不随仓库分发**
 
 `app/js/samples*.js` 里的本地可选乐器采样来自第三方开源项目
-[WindsongLyre-Simulator](https://github.com/JularDepick/WindsongLyre-Simulator.fork)，
+[WindsongLyre-Simulator](https://github.com/JularDepick/WindsongLyre-Simulator.fork) 与
+[genshin-music](https://github.com/Specy/genshin-music)（晚风圆号），
 其**原始音频是游戏资源，版权归 miHoYo 所有**。
 
 因此：
@@ -46,6 +47,7 @@
 |---|---|---|
 | [BetterGI](https://github.com/babalae/better-genshin-impact) | 曲谱格式与演奏语义标准；解析器按其语义复刻 | GPL-3.0 |
 | [WindsongLyre-Simulator](https://github.com/JularDepick/WindsongLyre-Simulator.fork) | 本地可选采样下载源（**不 vendor**，由 `fetch_samples.py` 按需下载到本地） | 未提供 LICENSE 文件；音频版权归 miHoYo |
+| [Specy/genshin-music](https://github.com/Specy/genshin-music) | 晚风圆号（NightwindHorn）本地可选采样下载源（**不 vendor**，由 `fetch_samples.py` 按需下载到本地） | 仓库代码 AGPL-3.0；音频版权归 miHoYo |
 
 ## 6. 免责
 

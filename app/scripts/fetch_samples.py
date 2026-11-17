@@ -7,8 +7,11 @@ fetch_samples.py — 下载游戏乐器 21 音采样并生成 app/js/samples*.js
 想在本机或自行部署站点使用真实音色，跑一次这个脚本即可生成采样包
 （本地产物已被 .gitignore 排除）。
 
-数据来源：https://github.com/JularDepick/WindsongLyre-Simulator.fork
-          instruments/<id>/audio/{1-,1,1+,…,7+}.mp3   （与 21 键一一对应）
+数据来源：
+  - https://github.com/JularDepick/WindsongLyre-Simulator.fork
+    instruments/<id>/audio/{1-,1,1+,…,7+}.mp3   （与 21 键一一对应）
+  - https://github.com/Specy/genshin-music（nightwind_horn 晚风圆号）
+    NightwindHorn/m{48..71}.mp3 → 对应游戏默认键位 Q-U（上排）+ A-J（中排）
 
 用法：
     python app/scripts/fetch_samples.py              # 下载 + 转码 + 生成
@@ -33,6 +36,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 
 RAW = 'https://raw.githubusercontent.com/JularDepick/WindsongLyre-Simulator.fork/main/instruments/'
+NIGHTWIND_RAW = 'https://raw.githubusercontent.com/Specy/genshin-music/main/src/lib/games/genshin/instruments/NightwindHorn/'
 
 # 站点命名 -> 科学音高（与原神 21 键一一对应）
 KEY_TO_NOTE = [
@@ -41,9 +45,17 @@ KEY_TO_NOTE = [
     ('1+', 'C5'), ('2+', 'D5'), ('3+', 'E5'), ('4+', 'F5'), ('5+', 'G5'), ('6+', 'A5'), ('7+', 'B5'),
 ]
 
+# 晚风圆号游戏内默认键位为上排 Q-U + 中排 A-J（共 14 键，无下排 Z-M）：
+# 高音排 m60..m71 -> C5..B5（Q-U），中音排 m48..m59 -> C4..B4（A-J）
+NIGHTWIND_MAP = [
+    ('m48', 'C4'), ('m50', 'D4'), ('m52', 'E4'), ('m53', 'F4'), ('m55', 'G4'), ('m57', 'A4'), ('m59', 'B4'),
+    ('m60', 'C5'), ('m62', 'D5'), ('m64', 'E5'), ('m65', 'F5'), ('m67', 'G5'), ('m69', 'A5'), ('m71', 'B5'),
+]
+
 INSTRUMENTS = [
-    'windsong_lyre', 'vintage_lyre', 'floral_zither', 'floral_zither_old',
+    'windsong_lyre', 'vintage_lyre', 'floral_zither',
     'harmonic_key', 'leaping_spirit_piano', 'ukulele', 'lingering_euphonia',
+    'nightwind_horn',
 ]
 
 UA = {'User-Agent': 'Mozilla/5.0 (compatible; genshin-music-score-maker/1.0)'}
@@ -69,7 +81,7 @@ def have_ffmpeg():
     return shutil.which('ffmpeg') is not None
 
 
-def transcode(src_dir, dst_dir):
+def transcode(src_dir, dst_dir, max_sec=2.2):
     os.makedirs(dst_dir, exist_ok=True)
     ok = 0
     for f in sorted(os.listdir(src_dir)):
@@ -77,7 +89,7 @@ def transcode(src_dir, dst_dir):
             continue
         out = os.path.join(dst_dir, f)
         cmd = ['ffmpeg', '-y', '-loglevel', 'error', '-i', os.path.join(src_dir, f),
-               '-ac', '1', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '48k', '-t', '2.2', out]
+               '-ac', '1', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '48k', '-t', str(max_sec), out]
         if subprocess.call(cmd) == 0 and os.path.exists(out) and os.path.getsize(out) > 1500:
             ok += 1
     return ok
@@ -118,12 +130,20 @@ def main(argv=None):
 
     try:
         tasks = []
+        expected_counts = {}
         for inst in todo:
             d = os.path.join(raw_dir, inst)
             os.makedirs(d, exist_ok=True)
-            for key, note in KEY_TO_NOTE:
-                url = RAW + inst + '/audio/' + urllib.parse.quote(key) + '.mp3'
-                tasks.append((inst, url, os.path.join(d, note + '.mp3')))
+            if inst == 'nightwind_horn':
+                expected_counts[inst] = len(NIGHTWIND_MAP)
+                for src_key, note in NIGHTWIND_MAP:
+                    url = NIGHTWIND_RAW + src_key + '.mp3'
+                    tasks.append((inst, url, os.path.join(d, note + '.mp3')))
+            else:
+                expected_counts[inst] = len(KEY_TO_NOTE)
+                for key, note in KEY_TO_NOTE:
+                    url = RAW + inst + '/audio/' + urllib.parse.quote(key) + '.mp3'
+                    tasks.append((inst, url, os.path.join(d, note + '.mp3')))
 
         counts = {inst: [0, 0] for inst in todo}
         with ThreadPoolExecutor(max_workers=12) as pool:
@@ -137,9 +157,10 @@ def main(argv=None):
 
         for inst in todo:
             ok, miss = counts[inst]
+            exp = expected_counts[inst]
             total_ok += ok
             total_miss += miss
-            print('  %-24s %2d/21%s' % (inst, ok, '  （缺 %d 个音，用邻近采样兜底）' % miss if miss else ''))
+            print('  %-24s %2d/%2d%s' % (inst, ok, exp, '  （缺 %d 个音，用邻近采样兜底）' % miss if miss else ''))
 
         if total_ok == 0:
             print('✗ 未能下载任何采样音频，请检查网络连接')
@@ -147,12 +168,12 @@ def main(argv=None):
 
         src_dir = raw_dir
         if do_transcode:
-            print('\n转码中（mono 44.1k / 48kbps / 2.2s）…')
+            print('\n转码中（mono 44.1k / 48kbps；拨弦 2.2s / 圆号长音 8.0s）…')
             for inst in todo:
                 a = os.path.join(raw_dir, inst)
                 b = os.path.join(out_src, inst)
                 if os.path.isdir(a):
-                    transcode(a, b)
+                    transcode(a, b, max_sec=8.0 if inst == 'nightwind_horn' else 2.2)
             src_dir = out_src
             if not os.path.isdir(out_src):
                 src_dir = raw_dir

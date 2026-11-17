@@ -295,6 +295,29 @@ function pageScript(scoreUrl) {
       eng.stopAll();
       ok('音色 ' + id + ' 出声（RMS=' + r.toFixed(4) + '）', r > 0.0008);
     }
+
+    /* 持续音采样（如晚风圆号）按传入 dur 收尾，不会在短音上拖长延音 */
+    {
+      const sr = actx.sampleRate;
+      const buf = actx.createBuffer(1, sr * 2, sr);
+      const ch = buf.getChannelData(0);
+      for (let i = 0; i < ch.length; i++) ch[i] = 0.4 * Math.sin(2 * Math.PI * 440 * i / sr);
+      eng._samples[69] = { buffer: buf, name: 'A4.wav' };
+      eng._sampleMidis = [69];
+      eng.setSampleOptions({ sustain: true, release: 0.12, minLength: 0.06 });
+      eng.setInstrument('sample');
+      eng.stopAll();
+      await sleep(80);
+      eng.noteOn(69, actx.currentTime + 0.02, 0.15, 1);
+      await sleep(100);
+      const rOn = rms();
+      await sleep(900);
+      const rOff = rms();
+      eng.clearSamples();
+      eng.stopAll();
+      ok('持续音采样短音（dur=0.15s）发声且在音尾后收净（rOn=' + rOn.toFixed(4) + ', rOff=' + rOff.toFixed(4) + '）',
+        rOn > 0.01 && rOff < rOn * 0.08);
+    }
     eng.setMasterVolume(0.8);
 
     return out.join('\\n');

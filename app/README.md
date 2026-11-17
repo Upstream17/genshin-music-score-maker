@@ -78,26 +78,28 @@
 
 ## 3. 音色
 
-### 3.1 默认：7 套真实乐器采样
+### 3.1 默认：8 套真实乐器采样
 
-默认音色就是**真实采样**（风物之诗琴），不再是合成近似。已清理冗余旧版与历史遗留合成项，下拉框保留 7 套精选真机音色：
+默认音色就是**真实采样**（风物之诗琴），不再是合成近似。下拉框保留 8 套真机音色（已移除旧版镜花之琴，新增晚风圆号）：
 
 | 音色 | 说明 |
 |---|---|
 | **风物之诗琴** | 默认（`samples.js`，随页面加载） |
 | 老旧的诗琴 / 镜花之琴 | 诗琴系列 |
 | 谐律键琴 / 跃律琴 / 悠可琴 / 余音 | 需切换时按需加载 |
+| **晚风圆号** | 持续吹奏包络（`sustain`），对应游戏默认 **Q–U（上排）+ A–J（中排）** 两排 14 键 |
 
-- **来源**：开源项目 [WindsongLyre-Simulator](https://github.com/JularDepick/WindsongLyre-Simulator.fork)
-  的 `instruments/<id>/audio/`（每个乐器 21 个音，与 21 键一一对应）
-- **转码**：`ffmpeg -ac 1 -ar 44100 -c:a libmp3lame -b:a 48k -t 2.2`
-- **体积**：7 套共约 1.5 MB，其中默认那套约 344 KB；其余 6 套**只在切到它时才加载**
-- **可复现**：`python app/tests/gen_samples.py <各乐器目录> app/js`
+- **来源**：
+  - 诗琴 / 键琴 / 悠可琴 / 余音：开源项目 [WindsongLyre-Simulator](https://github.com/JularDepick/WindsongLyre-Simulator.fork) 的 `instruments/<id>/audio/`
+  - 晚风圆号：开源项目 [genshin-music](https://github.com/Specy/genshin-music) 的 `NightwindHorn`（`m48..m71`，映射至 `A–J` 与 `Q–U`）
+- **转码**：`ffmpeg -ac 1 -ar 44100 -c:a libmp3lame -b:a 48k`（拨弦 2.2s / 圆号长音 8.0s）
+- **体积**：默认那套约 344 KB；其余 7 套**只在切到它时才加载**
+- **可复现**：`python app/scripts/fetch_samples.py` 或 `python app/tests/gen_samples.py <各乐器目录> app/js`
 
 > ⚠️ **音频版权归 miHoYo 所有。** 这里只是把它们放进你本机的项目里自用，
 > **请不要提交到公开仓库，也不要分发给别人。**
 > 删掉 `js/samples.js` 与 `js/samples-*.js`，播放器会自动回退到内置合成音色（竖琴、钢琴、八音盒），其余功能不受影响。
-> `谐律键琴` 原始素材缺 6 个音（15/21），缺的音用最邻近采样变调顶上。
+> `谐律键琴` 原始素材缺 6 个音（15/21），`晚风圆号` 原生为 14 键（14/21，无下排 Z–M），缺的音均用最邻近采样变调顶上。
 
 ### 3.2 换成你自己的采样
 
@@ -141,7 +143,7 @@ app/
 │   ├── bettergi-parse.js    三 type 解析器（window.BGIParse）
 │   ├── audio-engine.js      Web Audio 引擎 + 采样加载（window.BGIAudio）
 │   ├── samples.js           ★ 音色清单 + 默认音色（风物之诗琴，base64；不进 git）
-│   ├── samples-vintage_lyre.js 等 6 个文件（其余 6 套音色，按需加载；不进 git）
+│   ├── samples-vintage_lyre.js 等 7 个文件（其余 7 套音色，按需加载；不进 git）
 │   └── app.js               界面 / 调度 / 键盘弹奏 / 编辑 / 歌单
 ├── scripts/
 │   ├── build_site.py        静态部署构建脚本

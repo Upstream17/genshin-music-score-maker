@@ -97,6 +97,9 @@ function pageScript(scoreUrls) {
     const realOpts = [...sel.options].filter(o => o.value.indexOf('real:') === 0).map(o => o.value);
     const synthOpts = [...sel.options].filter(o => o.value.indexOf('synth:') === 0);
     ok('下拉里有 ' + realOpts.length + ' 套真实音色', realOpts.length >= 7, realOpts.join(','));
+    ok('已移除旧版镜花之琴并加入晚风圆号',
+      realOpts.indexOf('real:floral_zither_old') === -1 && realOpts.indexOf('real:nightwind_horn') >= 0,
+      realOpts.join(','));
     ok('合成音色被明确标成「备用」', synthOpts.length > 0 && /备用/.test(synthOpts[0].textContent),
       synthOpts[0] ? synthOpts[0].textContent : '无');
 
@@ -105,7 +108,7 @@ function pageScript(scoreUrls) {
       for (let i = 0; i < 100; i++) {
         await sleep(100);
         s = $('#sampleStat').textContent;
-        if (/\\/21/.test(s) && s.indexOf('正在加载') < 0 && pred(s)) break;
+        if (/\\/(?:14|21)/.test(s) && s.indexOf('正在加载') < 0 && pred(s)) break;
       }
       return s;
     };
@@ -113,7 +116,17 @@ function pageScript(scoreUrls) {
     sel.value = realOpts[1];
     sel.dispatchEvent(new Event('change'));
     const s2 = await waitStat(() => true);
-    ok('切换到「' + realOpts[1] + '」并完成加载（' + s2.trim() + '）', /\\/21/.test(s2), s2);
+    ok('切换到「' + realOpts[1] + '」并完成加载（' + s2.trim() + '）', /\\/(?:14|21)/.test(s2), s2);
+
+    sel.value = 'real:nightwind_horn';
+    sel.dispatchEvent(new Event('change'));
+    const sHorn = await waitStat(s => s.indexOf('晚风圆号') >= 0);
+    const hornNotes = window.BGI_SAMPLE_SETS && window.BGI_SAMPLE_SETS['nightwind_horn'] && window.BGI_SAMPLE_SETS['nightwind_horn'].notes;
+    ok('切换到晚风圆号（14/14，映射在 Q–U / A–J 且启用 sustain）',
+      sHorn.indexOf('晚风圆号') >= 0 && /14\\/14/.test(sHorn) &&
+      !!(window.BGI_SAMPLE_SETS['nightwind_horn'] && window.BGI_SAMPLE_SETS['nightwind_horn'].sustain) &&
+      !!(hornNotes && hornNotes.C5 && hornNotes.C4 && !hornNotes.C3),
+      sHorn);
 
     sel.value = 'real:windsong_lyre';
     sel.dispatchEvent(new Event('change'));
@@ -490,6 +503,42 @@ function pageScript(scoreUrls) {
     const durAfterCut = $('#tTotal').textContent;
     ok('删除顶部表头选定的时间列后后续音符整体前移、总时长缩短（' + durBeforeCut + ' -> ' + durAfterCut + '）',
       notesCount() === 2 && durAfterCut !== durBeforeCut && durAfterCut < durBeforeCut, durBeforeCut + ' -> ' + durAfterCut);
+
+    /* 长音符中间插有早结束的短音符时，长音后半段仍可选中并拖拽右边缘改时长 */
+    $('#btnNewScore').click();
+    await sleep(100);
+    const xLongStart = Math.round(rBox.left + 40 + (rBox.width - 50) * 0.30);
+    const yLong = Math.round(rBox.top + rBox.height * 0.45);
+    const yShort = Math.round(rBox.top + rBox.height * 0.65);
+    cv.dispatchEvent(new MouseEvent('click', { clientX: xLongStart, clientY: yLong, bubbles: true }));
+    await sleep(60);
+    for (let k = 0; k < 6; k++) $('#btnDurUp').click();
+    await sleep(60);
+    const longInfoBefore = $('#editInfo').textContent;
+    const longDurMatch = /时值\\s*(\\d+)ms/.exec(longInfoBefore);
+    const longDurMs = longDurMatch ? parseInt(longDurMatch[1], 10) : 0;
+    /* 在长音中途另一行落一个短音（它的 end 远早于长音的 end） */
+    cv.dispatchEvent(new MouseEvent('click', { clientX: xLongStart + 70, clientY: yShort, bubbles: true }));
+    await sleep(60);
+    /* 计算长音右边缘坐标（roll 默认 8s 窗口，plotW = rBox.width - 46） */
+    const plotW = rBox.width - 46;
+    const xLongEdge = Math.round(xLongStart + (longDurMs / 8000) * plotW);
+    /* 先清空选中，再悬停 & 拖拽长音右边缘 */
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await sleep(40);
+    cv.dispatchEvent(new PointerEvent('pointermove', { clientX: xLongEdge, clientY: yLong, bubbles: true }));
+    await sleep(40);
+    const edgeCursor = cv.style.cursor;
+    cv.dispatchEvent(new PointerEvent('pointerdown', { button: 0, pointerId: 4, clientX: xLongEdge, clientY: yLong, bubbles: true }));
+    cv.dispatchEvent(new PointerEvent('pointermove', { button: 0, pointerId: 4, clientX: xLongEdge + 60, clientY: yLong, bubbles: true }));
+    cv.dispatchEvent(new PointerEvent('pointerup', { button: 0, pointerId: 4, clientX: xLongEdge + 60, clientY: yLong, bubbles: true }));
+    await sleep(80);
+    const longInfoAfter = $('#editInfo').textContent;
+    const longDurAfterMatch = /时值\\s*(\\d+)ms/.exec(longInfoAfter);
+    const longDurAfterMs = longDurAfterMatch ? parseInt(longDurAfterMatch[1], 10) : 0;
+    ok('长音中途存在短音时，后半段右边缘仍可识别并拉长（cursor=' + edgeCursor + ', ' + longDurMs + 'ms -> ' + longDurAfterMs + 'ms）',
+      edgeCursor === 'ew-resize' && longDurAfterMs > longDurMs,
+      longInfoBefore + ' -> ' + longInfoAfter);
 
     return out.join('\\n');
   } catch (e) {

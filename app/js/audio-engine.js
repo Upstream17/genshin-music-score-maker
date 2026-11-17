@@ -296,6 +296,7 @@
     this._voices = [];
     this._samples = {};            // midi -> {buffer, name}
     this._sampleMidis = [];        // 升序的已加载 MIDI
+    this._sampleOpts = { sustain: false, release: 0.12, minLength: 0.06 };
     this._waves = {};              // instrumentId -> PeriodicWave
     this._noiseBuf = null;
     this._rnd = makeRandom(0x9E3779B1);
@@ -620,7 +621,7 @@
     return true;
   };
 
-  /** 采样 voice：用邻近采样 + playbackRate 变调兜底。 */
+  /** 采样 voice：用邻近采样 + playbackRate 变调兜底。支持拨弦衰减与持续吹奏（sustain）两种包络。 */
   Engine.prototype._sampleVoice = function (midi, when, dur, vel, inst) {
     var pick = this._nearestSample(midi);
     if (!pick) return false;
@@ -629,28 +630,50 @@
     // 音高换算：目标相对采样原始音高差多少半音 → playbackRate = 2^(n/12)
     var rate = clamp(Math.pow(2, (midi - pick.midi) / 12), 0.125, 8);
     var native = pick.buffer.duration / rate;          // 该采样在这个音高上最长能响多久
-    var wanted = dur > 0 ? dur * 1.25 : inst.tail;
-    var tail = clamp(wanted, Math.min(inst.minTail, native), native);
-    if (!(tail > 0.01)) tail = Math.min(0.01, native);
     var peak = Math.max(0.0002, inst.gain * vel);
-    var end = when + tail;
+    var sOpts = this._sampleOpts || {};
+    var isSustain = !!sOpts.sustain;
 
     var src = ctx.createBufferSource();
     src.buffer = pick.buffer;
     try { src.playbackRate.setValueAtTime(rate, when); } catch (e) { src.playbackRate.value = rate; }
 
     var g = ctx.createGain();
-    // 拨弦衰减包络：起音 2ms 迅速冲顶，之后做模拟拨弦的自然指数衰减
-    var fadeOut = Math.min(0.06, tail * 0.5);
-    g.gain.setValueAtTime(0, when);
-    g.gain.linearRampToValueAtTime(peak, when + 0.002);
-    var decayTarget = Math.max(0.0002, peak * 0.35);
-    var decayDuration = Math.min(tail * 0.6, 0.4);
-    if (decayDuration > 0.05) {
-      g.gain.setTargetAtTime(decayTarget, when + 0.003, decayDuration * 0.45);
+    var end;
+    var dampTau = 0.05;
+
+    if (isSustain) {
+      // 持续吹奏包络（如晚风圆号）：保留采样自身的起音渐强，按住期间维持音量，到点/松开按 release 利落收尾
+      var rel = clamp(Number(sOpts.release) || 0.12, 0.02, 0.8);
+      var minLen = clamp(Number(sOpts.minLength) || 0.06, 0.02, 0.5);
+      var targetDur = dur > 0 ? Math.max(minLen, dur) : Math.max(minLen, native);
+      end = when + Math.min(native, targetDur + rel * 0.35);
+      var fadeStart = Math.max(when + 0.005, end - rel);
+      if (!(end > when + 0.01)) end = when + Math.min(0.01, native);
+      var fadeIn = Math.min(0.005, Math.max(0.001, (fadeStart - when) * 0.5));
+      g.gain.setValueAtTime(0, when);
+      g.gain.linearRampToValueAtTime(peak, when + fadeIn);
+      if (fadeStart > when + fadeIn) g.gain.setValueAtTime(peak, fadeStart);
+      g.gain.linearRampToValueAtTime(0, end);
+      dampTau = Math.max(0.03, rel * 0.3);
+    } else {
+      var wanted = dur > 0 ? dur * 1.25 : inst.tail;
+      var tail = clamp(wanted, Math.min(inst.minTail, native), native);
+      if (!(tail > 0.01)) tail = Math.min(0.01, native);
+      end = when + tail;
+
+      // 拨弦衰减包络：起音 2ms 迅速冲顶，之后做模拟拨弦的自然指数衰减
+      var fadeOut = Math.min(0.06, tail * 0.5);
+      g.gain.setValueAtTime(0, when);
+      g.gain.linearRampToValueAtTime(peak, when + 0.002);
+      var decayTarget = Math.max(0.0002, peak * 0.35);
+      var decayDuration = Math.min(tail * 0.6, 0.4);
+      if (decayDuration > 0.05) {
+        g.gain.setTargetAtTime(decayTarget, when + 0.003, decayDuration * 0.45);
+      }
+      g.gain.setValueAtTime(Math.max(0.0002, decayTarget * 0.7), Math.max(when + 0.004, end - fadeOut));
+      g.gain.linearRampToValueAtTime(0, end);
     }
-    g.gain.setValueAtTime(Math.max(0.0002, decayTarget * 0.7), Math.max(when + 0.004, end - fadeOut));
-    g.gain.linearRampToValueAtTime(0, end);
 
     src.connect(g);
     g.connect(this.dry);
@@ -661,7 +684,7 @@
     this._voices.push({
       midi: midi, start: when, end: end,
       out: g, nodes: [g], sources: [src, g],
-      dampTau: 0.05, sampleMidi: pick.midi, rate: rate, name: pick.name
+      dampTau: dampTau, sampleMidi: pick.midi, rate: rate, name: pick.name
     });
     return true;
   };
@@ -705,7 +728,7 @@
       try { g.linearRampToValueAtTime(0, when + 0.1); } catch (e3) { /* ignore */ }
     }
     // 收尾后提前停掉所有源，尽快释放节点
-    var stopAt = when + 0.4;
+    var stopAt = when + Math.max(0.4, (voice.dampTau || 0.045) * 6);
     for (var i = 0; i < voice.sources.length; i++) {
       var s = voice.sources[i];
       if (s && typeof s.stop === 'function') { try { s.stop(stopAt); } catch (e4) { /* ignore */ } }
@@ -735,8 +758,19 @@
    *   entries : [{midi, pitch, fileName}] ← 便于 UI 直接渲染
    *   missing : 映射不上或解码失败的原始文件名
    */
-  Engine.prototype.loadSampleFiles = async function (files) {
+  Engine.prototype.setSampleOptions = function (opts) {
+    var o = opts && typeof opts === 'object' ? opts : {};
+    this._sampleOpts = {
+      sustain: !!o.sustain,
+      release: o.release != null ? Number(o.release) : 0.12,
+      minLength: o.minLength != null ? Number(o.minLength) : 0.06
+    };
+    return this._sampleOpts;
+  };
+
+  Engine.prototype.loadSampleFiles = async function (files, opts) {
     var self = this;
+    if (opts !== undefined) this.setSampleOptions(opts);
     var list = [];
     if (files) {
       if (typeof files.length === 'number') {
@@ -822,6 +856,7 @@
   Engine.prototype.clearSamples = function () {
     this._samples = {};
     this._sampleMidis = [];
+    this._sampleOpts = { sustain: false, release: 0.12, minLength: 0.06 };
     if (this._instrumentId === 'sample') this._instrumentId = DEFAULT_INSTRUMENT;
     return true;
   };

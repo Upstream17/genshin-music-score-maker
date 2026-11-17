@@ -81,6 +81,7 @@
 
     engine: null,
     instrumentKey: '',      /* 'real:<id>' 真实采样 | 'synth:<id>' 合成 */
+    instrumentSustain: false,
     customFiles: null,      /* 用户自己加载的采样（本会话有效） */
     volume: 0.8,
     theme: 'light',
@@ -270,9 +271,23 @@
   }
 
   function safeResume() {
+    var ctx = state.engine && state.engine.context;
+    if (ctx && ctx.state === 'running') return Promise.resolve(true);
     return Promise.resolve()
       .then(function () { if (state.engine && typeof state.engine.resume === 'function') return state.engine.resume(); })
       .catch(function () { toast('浏览器阻止了音频启动 —— 请再点一次「播放」', 'err'); });
+  }
+
+  function triggerLiveNote(pitch, isStillHeld, fallbackDur, vel) {
+    var ctx = state.engine && state.engine.context;
+    if (ctx && ctx.state === 'running') {
+      noteOn(pitch, engNow() + 0.005, state.instrumentSustain ? 0 : fallbackDur, vel);
+      return;
+    }
+    safeResume().then(function () {
+      var dur = (state.instrumentSustain && isStillHeld()) ? 0 : (state.instrumentSustain ? 0.18 : fallbackDur);
+      noteOn(pitch, engNow() + 0.005, dur, vel);
+    });
   }
 
   function noteOn(pitch, whenSec, durSec, vel) {
@@ -379,6 +394,7 @@
 
     /* 合成音色 */
     if (key.indexOf(SYNTH_PREFIX) === 0) {
+      state.instrumentSustain = false;
       try { state.engine.setInstrument(key.slice(SYNTH_PREFIX.length)); } catch (_) { }
       setSampleStat('合成音色（备用）· 没有真实采样时的兜底', '');
       return;
@@ -393,6 +409,7 @@
     setSampleStat('正在加载「' + info.name + '」…', '');
     try {
       var files;
+      var sustainOpts = { sustain: false };
       if (id === 'custom') {
         if (!state.customFiles) throw new Error('请重新选择采样文件夹');
         files = state.customFiles;
@@ -401,20 +418,31 @@
         var bank = window.BGI_SAMPLE_SETS && window.BGI_SAMPLE_SETS[id];
         if (!bank || !bank.notes) throw new Error('音色数据缺失');
         files = filesFromBank(bank.notes);
+        sustainOpts = {
+          sustain: !!bank.sustain,
+          release: bank.release,
+          minLength: bank.minLength
+        };
       }
       if (token !== applyToken) return;
 
       if (typeof state.engine.clearSamples === 'function') state.engine.clearSamples();
-      var res = await state.engine.loadSampleFiles(files);
+      var res = await state.engine.loadSampleFiles(files, sustainOpts);
       if (token !== applyToken) return;
 
       state.engine.setInstrument('sample');
       state.samplesReady = true;
+      state.instrumentSustain = !!sustainOpts.sustain;
       var miss = 21 - res.loaded;
-      setSampleStat(info.name + ' · 真实采样 ' + res.loaded + '/21 音' +
-        (miss > 0 ? '（缺 ' + miss + ' 音，用邻近采样变调）' : ' ✓'), 'ok');
+      if (id === 'nightwind_horn') {
+        setSampleStat(info.name + ' · 真实采样 ' + res.loaded + '/14 音（仅 Q–U / A–J 两排，Z–M 变调兜底） ✓', 'ok');
+      } else {
+        setSampleStat(info.name + ' · 真实采样 ' + res.loaded + '/21 音' +
+          (miss > 0 ? '（缺 ' + miss + ' 音，用邻近采样变调）' : ' ✓'), 'ok');
+      }
     } catch (e) {
       if (token !== applyToken) return;
+      state.instrumentSustain = false;
       setSampleStat('「' + info.name + '」加载失败：' + ((e && e.message) || e) + ' · 已回退合成音色', 'err');
       try { state.engine.setInstrument('windsong'); } catch (_) { }
     }
@@ -1482,7 +1510,7 @@
         var startMs = Math.max(n.start, nowScore);
         if (n.end > startMs) {
           var when = Math.max(w, now + 0.004);
-          var dur = Math.max(MIN_NOTE_MS, (n.end - startMs) / 1000 / state.speed);
+          var dur = Math.max(MIN_NOTE_MS / 1000, (n.end - startMs) / 1000 / state.speed);
           noteOn(n.pitch, when, dur, n.velocity);
         }
       }
@@ -1710,9 +1738,7 @@
     pointerActiveKeys[k] = true;
     var p = keyToPitch(k);
     state.audition[k] = Date.now() + 180;
-    safeResume().then(function () {
-      noteOn(p, engNow() + 0.005, 0.45, 0.95);
-    });
+    triggerLiveNote(p, function () { return !!pointerActiveKeys[k]; }, 0.45, 0.95);
     if (state.recording) recordNoteStart(k);
   }
 
@@ -2258,12 +2284,15 @@
     if (row < 0 || row > 20) return null;
     var key = LABELS[row];
     var t = g.timeOf(x);
+    var msPerPx = (g.t1 - g.t0) / Math.max(1, g.plotW);
+    var rightPadMs = Math.max(600, (padX + 4) * msPerPx + 100);
+    var leftLimit = Math.max(6000, state.maxNoteMs || 6000) + Math.max(600, edgePad * msPerPx + 100);
     var best = null, bestDist = Infinity, isEdge = false;
-    var idx = upperBoundStart(notes, t + 600);
-    for (var i = idx - 1; i >= 0 && i > idx - 500; i--) {
+    var idx = upperBoundStart(notes, t + rightPadMs);
+    for (var i = idx - 1; i >= 0; i--) {
       var n = notes[i];
       if (!n) continue;
-      if (n.end < t - 500) break;
+      if (t - n.start > leftLimit) break;
       if (n.key !== key) continue;
       var x0 = g.xOf(n.start);
       var x1 = g.xOf(n.end);
@@ -3632,7 +3661,7 @@
         state.heldKeys[k] = true;
         if (state.recording) recordNoteStart(k);
         if (!ensureEngine()) return;
-        safeResume().then(function () { noteOn(keyToPitch(k), engNow() + 0.005, state.recording ? 3.5 : 0.6, 0.92); });
+        triggerLiveNote(keyToPitch(k), function () { return !!state.heldKeys[k]; }, state.recording ? 3.5 : 0.6, 0.92);
       }
     }
   }

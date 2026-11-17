@@ -40,7 +40,7 @@
 - **变速 0.5×–2×（不变调）**、列表循环 / 单曲循环 / 顺序播放
 - **键盘弹奏与录制**：支持 `QWERTYU` / `ASDFGHJ` / `ZXCVBNM` 实时弹奏及按住录制
 - **音符编辑**：点击落音、增删音符、改音高/时值、撤销、**导出 BetterGI JSON**
-- **多乐器与多音色**：公开网页版开箱内置 **3 种 WebAudio 合成音色（竖琴 / 钢琴 / 音乐盒）** 并支持**导入自定义采样文件夹**；本机也可按需运行 `app/scripts/fetch_samples.py` 生成 7 套游戏采样在本地离线切换
+- **多乐器与多音色**：公开网页版开箱内置 **3 种 WebAudio 合成音色（竖琴 / 钢琴 / 音乐盒）** 并支持**导入自定义采样文件夹**；本机也可按需运行 `app/scripts/fetch_samples.py` 生成 8 套游戏采样（含晚风圆号）在本地离线切换
 
 ### B. 有一首 MIDI 想转成原琴谱子
 
@@ -118,3 +118,4 @@ node app/tests/ui.test.js                # 音色 / 键盘弹奏 / 编辑 / 连�
 
 - [BetterGI](https://github.com/babalae/better-genshin-impact) — 曲谱格式与演奏语义的事实标准
 - [WindsongLyre-Simulator](https://github.com/JularDepick/WindsongLyre-Simulator.fork) — 乐器采样参考来源
+- [Specy/genshin-music](https://github.com/Specy/genshin-music) — 晚风圆号（NightwindHorn）采样参考来源
