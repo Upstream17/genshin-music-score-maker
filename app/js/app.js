@@ -1510,8 +1510,9 @@
         var startMs = Math.max(n.start, nowScore);
         if (n.end > startMs) {
           var when = Math.max(w, now + 0.004);
-          var dur = Math.max(MIN_NOTE_MS / 1000, (n.end - startMs) / 1000 / state.speed);
-          noteOn(n.pitch, when, dur, n.velocity);
+          var noteDur = Math.max(MIN_NOTE_MS / 1000, (n.end - startMs) / 1000 / state.speed);
+          // 拨弦/弹拨类乐器在曲谱里常见极短的按键触发（如 70ms），松键不该截断琴弦余韵；仅持续音色按时值收尾
+          noteOn(n.pitch, when, state.instrumentSustain ? noteDur : 0, n.velocity);
         }
       }
       state.cursor++;
