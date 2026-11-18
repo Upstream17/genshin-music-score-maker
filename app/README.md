@@ -7,14 +7,14 @@
 双击 app/index.html（本地离线）  或  访问静态部署站点（https://yuanqin.upstream.eu.cc）
 ```
 
-零依赖、零构建。本地 `file://` 直开零网络请求；通过 `http(s)://` 静态托管访问时，自动拉取 `library/manifest.json` 加载 23 首示范曲供访客试听。纸白 / 夜间双主题、墨字、单一青瓷绿强调色，纯扁平；支持桌面、平板与手机端自适应。
+零依赖、零构建。本地 `file://` 直开零网络请求；通过 `http(s)://` 静态托管访问时，自动拉取 `library/manifest.json` 加载 25 首示范曲供访客试听。纸白 / 夜间双主题、墨字、单一青瓷绿强调色，纯扁平；支持桌面、平板与手机端自适应。
 
 ---
 
 ## 1. 怎么用
 
 1. 本地双击 `app/index.html`（或打开在线部署站点）
-2. 在线访问会自动载入 `library/` 中的 23 首示范曲；本地 `file://` 打开时把 `library/` 或你的曲谱目录**拖进页面**，或点「导入曲谱 / 整个文件夹」
+2. 在线访问会自动载入 `library/` 中的 25 首示范曲；本地 `file://` 打开时把 `library/` 或你的曲谱目录**拖进页面**，或点「导入曲谱 / 整个文件夹」
 3. 点曲目 → 空格播放
 
 左栏是歌单，中间是演奏台，设置与诊断收在左栏底部「＋音色与设置」里。
@@ -176,7 +176,7 @@ ES module 和 `fetch`，而「双击就能用」是这个工具的核心价值�
 
 ```powershell
 node app/tests/integration.test.js            # 契约 + 全库不变量
-node app/tests/parse.test.js library          # 解析器示范曲库（23 首）
+node app/tests/parse.test.js library          # 解析器示范曲库（25 首）
 node app/tests/serialize.test.js library      # 序列化回归（U@0 缺一不可，往返不漂移）
 node app/tests/audio.test.js                  # 音频引擎
 node app/tests/realtime.test.js               # 真实时间端到端（需 Chrome）
@@ -190,7 +190,7 @@ node app/tests/ui.test.js                     # 音色 / 键盘弹奏 / 编辑 /
 | 测试 | 结果 |
 |---|---|
 | `integration.test.js` | **62 PASS / 0 FAIL** |
-| `parse.test.js library` | **23/23 解析成功**，26,939 音符，不变量 0 违反，selfTest 53/0 |
+| `parse.test.js library` | **25/25 解析成功**，29,692 音符，不变量 0 违反，selfTest 53/0 |
 | `audio.test.js` | **165 PASS / 0 FAIL / 3 SKIP**（skip 均为「Node 无 AudioContext」） |
 | `realtime.test.js` | **32 PASS / 0 FAIL** |
 | `ui.test.js` | **82 PASS / 0 FAIL** |
