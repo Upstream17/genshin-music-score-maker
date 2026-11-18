@@ -190,7 +190,7 @@ node app/tests/ui.test.js                     # 音色 / 键盘弹奏 / 编辑 /
 | 测试 | 结果 |
 |---|---|
 | `integration.test.js` | **62 PASS / 0 FAIL** |
-| `parse.test.js library` | **25/25 解析成功**，29,692 音符，不变量 0 违反，selfTest 53/0 |
+| `parse.test.js library` | **25/25 解析成功**，29,693 音符，不变量 0 违反，selfTest 53/0 |
 | `audio.test.js` | **165 PASS / 0 FAIL / 3 SKIP**（skip 均为「Node 无 AudioContext」） |
 | `realtime.test.js` | **32 PASS / 0 FAIL** |
 | `ui.test.js` | **82 PASS / 0 FAIL** |
