@@ -136,18 +136,22 @@ def parse_smf(path: str) -> dict:
                 tr_prog.setdefault(ch, prog)
             elif e[1] == "on":
                 n, _, ch = e[2]
-                opened[(ti, ch, n)] = e[0]
+                # 同轨同通道同音高可叠置（踏板延音/连奏重叠）：用 LIFO 栈匹配 on/off，
+                # 否则后一个 on 会覆盖前一个已开的音，导致前一个音整条丢失。
+                opened.setdefault((ti, ch, n), []).append(e[0])
             elif e[1] == "off":
                 n, ch = e[2]
-                st = opened.pop((ti, ch, n), None)
-                if st is not None:
+                stack = opened.get((ti, ch, n))
+                if stack:
+                    st = stack.pop()
                     notes.append((to_sec(st), to_sec(e[0]), n, ti, ch))
         programs[ti] = tr_prog
 
     last_tick = max((e[0] for tr in tracks for e in tr), default=0)
     last = to_sec(last_tick)
-    for (ti, ch, n), st in opened.items():
-        notes.append((to_sec(st), last, n, ti, ch))
+    for (ti, ch, n), stack in opened.items():
+        for st in stack:
+            notes.append((to_sec(st), last, n, ti, ch))
 
     names = [next((e[2] for e in tr if e[1] == "name"), f"轨道{ti + 1}") for ti, tr in enumerate(tracks)]
     return dict(fmt=fmt, div=div, notes=notes, tempos=tempos, last=last, names=names, programs=programs)
