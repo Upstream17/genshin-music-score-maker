@@ -96,7 +96,7 @@ python skills/genshin-music-scores/scripts/score_cli.py convert "path/to/song.mi
 
 ```bash
 node app/tests/integration.test.js       # 契约 + 示范库不变量
-node app/tests/parse.test.js library     # 解析器回归（29 首示范曲 / 35,361 音符）
+node app/tests/parse.test.js library     # 解析器回归（29 首示范曲 / 35,397 音符）
 node app/tests/audio.test.js             # 音频引擎 / 文件名→音高映射
 node app/tests/realtime.test.js          # 真实时间端到端（Chrome + CDP）
 node app/tests/ui.test.js                # 音色 / 键盘弹奏 / 编辑 / 连播（Chrome + CDP）
