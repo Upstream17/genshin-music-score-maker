@@ -1,5 +1,5 @@
 {
- "name": "Another Day of Sun（全曲归C调）",
+ "name": "Another Day of Sun",
  "author": "Justin Hurwitz | GPT 转化",
  "instrument": "风物之诗琴",
  "description": "源文件：FF14合奏__Another_day_of_sun-爱乐之城.mid。高音钢琴担任主旋律，去除重复排箫轨。另一条钢琴保留前奏、间奏、尾奏和低音节奏，缩减密集和弦。前段降 E 大调移至 C 大调。末段也移至 C 大调，优先保留音程。保留 639/647 组旋律起音，其中 13 组改变音级。开头空拍裁剪 1.361 秒。前奏去掉 6 个高八度叠音；简化 20 秒的上行过门，去掉 4 个经过音，保留起音和落音。尾声上行 E4–F4–G4–A4–C5 统一音区，分开经过音，末拍恢复 C3 根音，保留原 MIDI 的 C 大三和弦。",
