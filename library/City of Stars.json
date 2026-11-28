@@ -1,6 +1,6 @@
 {
  "name": "City of Stars",
- "author": "Justin Hurwitz | GPT转化",
+ "author": "Justin Hurwitz | GPT 转化",
  "instrument": "风物之诗琴",
  "type": "midi",
  "description": "源文件 City_Of_Stars.mid。保留主旋律与伴奏，整体降 5 个半音。31 个低音上移一个八度，19 个半音替换为相邻白键。同键重击缩短前音，过近的击键合并 2 处。剪去开头 1.99 秒空拍，首音位于 0.30 秒。32–36 秒校准伴奏节奏和 E4 重击时值。 32-36s: E4 repeats at 33.243, 33.814, and 34.386s. The accompaniment is aligned to the revised attacks. Removed the short E5 at 35.530s. At 67.719-68.862s the G4-A4 motif follows the earlier phrase, adding its final A4.",
